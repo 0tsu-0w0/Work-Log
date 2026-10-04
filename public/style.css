@@ -293,3 +293,7 @@ del { color: #cf222e; text-decoration: none; }
 /* Slack */
 .slack-send { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
 .slack-send .small { width: 100%; }
+.cal-export { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.cal-export p { margin: 4px 0; }
+.sync-send { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
+.sync-send .small { width: 100%; }

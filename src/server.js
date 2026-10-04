@@ -64,6 +64,8 @@ export function createServer(store, { env = process.env } = {}) {
         // 送り先(URL やトークンは含めない)。slack などのキーは以前の形との互換
         ...Object.fromEntries(DESTINATIONS.map((d) => [d.name, store.destinations[d.name].status()])),
         destinations: DESTINATIONS.map((d) => ({ name: d.name, label: d.label, env: d.env, note: d.note, ...store.destinations[d.name].status() })),
+        // カレンダー・工数管理サービスへの記録先(トークンなどは含めない)
+        syncs: store.syncs.list(),
       });
     }
     if (req.method === 'GET' && parts[1] === 'sessions' && parts.length === 2) {
@@ -126,6 +128,44 @@ export function createServer(store, { env = process.env } = {}) {
         if (req.method === 'POST') {
           const body = JSON.parse((await readBody(req)) || '{}');
           return send(res, 200, await store.postReport({ target: fixed || body.target, period: body.period, date: body.date, tz: body.tz }, String(body.hash || '')));
+        }
+      } catch (err) {
+        return send(res, err.status || 400, { error: err.message });
+      }
+    }
+    // カレンダー(.ics)の書き出し: ?from=&to=(YYYY-MM-DD か ISO 8601。省くと過去30日、最大366日)
+    if (req.method === 'GET' && parts[1] === 'calendar.ics' && parts.length === 2) {
+      let r;
+      try {
+        r = store.calendar({ from: url.searchParams.get('from') || undefined, to: url.searchParams.get('to') || undefined, tz: url.searchParams.get('tz') || undefined });
+      } catch (err) {
+        return send(res, 400, { error: err.message });
+      }
+      const day = (ms) => new Date(ms).toISOString().slice(0, 10).replace(/-/g, '');
+      res.writeHead(200, {
+        'content-type': 'text/calendar; charset=utf-8',
+        'content-disposition': `attachment; filename="work-log-${day(r.from)}-${day(r.to - 1)}.ics"`,
+        'cache-control': 'no-store',
+      });
+      return res.end(r.ics);
+    }
+    // カレンダー・工数管理サービスへの記録: GET ?target=&from=&to=&tz= で下見、POST { target, from, to, tz, hash } で記録
+    if (parts[1] === 'sync' && parts.length === 2) {
+      try {
+        if (req.method === 'GET') {
+          const p = Object.fromEntries(url.searchParams);
+          const plan = await store.sync(p.target, { from: p.from, to: p.to, tz: p.tz });
+          const items = (list) => list.map(({ entry, hash, id, ...x }) => x);
+          return send(res, 200, {
+            target: plan.target, label: plan.label, status: plan.status, hash: plan.hash, previewText: plan.previewText,
+            counts: { create: plan.create.length, update: plan.update.length, delete: plan.delete.length, unchanged: plan.unchanged, skipped: plan.skipped },
+            create: items(plan.create), update: items(plan.update), delete: items(plan.delete),
+          });
+        }
+        if (req.method === 'POST') {
+          const body = JSON.parse((await readBody(req)) || '{}');
+          const str = (v) => (v === undefined || v === null ? undefined : String(v));
+          return send(res, 200, await store.postSync({ target: str(body.target), from: str(body.from), to: str(body.to), tz: str(body.tz) }, String(body.hash || '')));
         }
       } catch (err) {
         return send(res, err.status || 400, { error: err.message });

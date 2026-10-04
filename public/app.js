@@ -215,8 +215,10 @@ function renderWeekStats() {
         </div>`).join('') || '<p class="hint">この週のセッションはありません。</p>'}
     </div>
     <p class="hint">ブロックを選ぶと、セッションの詳細を表示します。</p>
-    ${sendButtons()}`;
+    ${sendButtons()}
+    ${calendarTools()}`;
   document.querySelectorAll('.slack-send button').forEach((b) => (b.onclick = () => sendReport(b.dataset.target, b.dataset.period, b)));
+  document.querySelectorAll('.sync-send button').forEach((b) => (b.onclick = () => syncWeek(b.dataset.sync, b)));
 }
 
 function weekActiveMs(s) {
@@ -461,6 +463,59 @@ async function sendReport(target, period, button) {
     try {
       const r = await api('/api/report', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ target, period, date, tz: TZ, hash: preview.hash }) });
       slackSent = { target, label: period === 'week' ? '週報' : '日報', url: r.url };
+      if (!state.selectedId) renderWeekStats();
+    } catch (err) {
+      msg(err.message, 'error');
+    } finally {
+      button.disabled = false;
+    }
+  };
+}
+
+// ---- カレンダー(.ics)の書き出しと、カレンダー・工数管理サービスへの記録 ----
+let syncDone = null; // 画面の自動更新で描き直しても、記録した結果の表示は残す
+
+const weekRange = () => ({ from: state.weekStart.toISOString(), to: addDays(state.weekStart, 7).toISOString() });
+
+function calendarTools() {
+  const ics = `/api/calendar.ics?${new URLSearchParams({ ...weekRange(), tz: TZ })}`;
+  const all = state.config?.syncs || [];
+  const on = all.filter((s) => s.configured);
+  return `<div class="cal-export">
+      <p class="small"><a href="${esc(ics)}" download>カレンダー(.ics)を書き出す</a>(この週の作業。秘匿情報は伏せます)</p>
+      ${on.map((s) => `<div class="sync-send"><span class="small">${esc(s.label)}(${esc(s.destination)})</span><button data-sync="${esc(s.name)}">この週を${esc(s.label)}に記録…</button></div>`).join('')}
+      ${on.length ? '' : all.length ? `<p class="small">${esc(all.map((s) => s.env.split('・')[0]).join('・'))} などを設定すると、作業をカレンダーや工数管理サービスに記録できます。</p>` : ''}
+      ${syncDone ? `<p class="small">${esc(syncDone)}</p>` : ''}
+    </div>`;
+}
+
+// 終わったセッションを記録する。追加・更新・削除の一覧を見せ、確認してから送る
+async function syncWeek(target, button) {
+  const msg = (text, cls = 'small') => button.parentElement.insertAdjacentHTML('afterend', `<p class="${cls}">${esc(text)}</p>`);
+  const range = { target, ...weekRange(), tz: TZ };
+  let preview;
+  try {
+    preview = await api(`/api/sync?${new URLSearchParams(range)}`);
+  } catch (err) {
+    return msg(err.message, 'error');
+  }
+  const c = preview.counts;
+  if (!c.create && !c.update && !c.delete) return msg(`${preview.label} に記録する変更はありません(記録済み ${c.unchanged}件)。`);
+  const dlg = $('comment-dialog');
+  const ok = dlg.querySelector('button[value="post"]');
+  const okText = ok.textContent;
+  ok.textContent = '記録する';
+  $('comment-title').textContent = `${preview.label}(${preview.status.destination})にこの週の作業を記録します`;
+  $('comment-note').textContent = `終わったセッションだけが対象です(${preview.status.mergeSegments ? 'セッションごとに1件' : '作業の区間ごとに1件'}、${preview.status.minMinutes}分未満は除く)。タイトルと説明の秘匿情報は伏せます。削除は Work Log が作った記録だけです。`;
+  $('comment-body').textContent = preview.previewText;
+  dlg.showModal();
+  dlg.onclose = async () => {
+    ok.textContent = okText;
+    if (dlg.returnValue !== 'post') return;
+    button.disabled = true;
+    try {
+      const r = await api('/api/sync', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...range, hash: preview.hash }) });
+      syncDone = `${preview.label}に記録しました: 追加 ${r.created}件・更新 ${r.updated}件・削除 ${r.deleted}件`;
       if (!state.selectedId) renderWeekStats();
     } catch (err) {
       msg(err.message, 'error');
