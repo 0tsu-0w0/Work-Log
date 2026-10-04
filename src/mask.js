@@ -28,3 +28,9 @@ export function maskDeep(v) {
   if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, maskDeep(x)]));
   return v;
 }
+
+// 長さを切り詰めるときは、先に伏せてから切る(後から伏せると、途中で切れたトークンの一部がパターンに合わずに残る)
+export function clipMasked(text, n) {
+  const m = mask(text);
+  return m.length > n ? m.slice(0, n) + '…' : m;
+}

@@ -2,6 +2,7 @@
 // 形式は openai/codex の codex-rs(rollout / protocol)に合わせている:
 //   各行 {"timestamp", "type": session_meta | response_item | event_msg | turn_context | token_usage_record | compacted …, "payload"}
 //   保存先 $CODEX_HOME/sessions/YYYY/MM/DD/rollout-<時刻>-<id>.jsonl(7日以上前のものは .jsonl.zst に圧縮される)
+import { clipMasked } from './mask.js';
 import { readFile } from 'node:fs/promises';
 import zlib from 'node:zlib';
 import path from 'node:path';
@@ -234,7 +235,7 @@ export function parseCodexText(text, { file = '' } = {}) {
     cwd,
     gitBranch: s.gitBranch,
     repoUrl: s.repoUrl || null,
-    title: firstLine ? (firstLine.length > 60 ? firstLine.slice(0, 60) + '…' : firstLine) : '(無題のセッション)',
+    title: firstLine ? clipMasked(firstLine, 60) : '(無題のセッション)',
     firstPrompt: prompts[0] ? prompts[0].slice(0, 2000) : null,
     prompts: prompts.map((p) => p.slice(0, 1000)),
     lastAssistantText: s.assistantTexts.length ? s.assistantTexts[s.assistantTexts.length - 1].slice(0, 2000) : null,

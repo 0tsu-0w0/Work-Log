@@ -26,7 +26,7 @@ import { buildCalendar } from './ical.js';
 // Git の情報は外部(手作業のコミットなど)でも変わるので、短時間だけ使い回す
 const GIT_CACHE_MS = 60 * 1000;
 
-const CACHE_VERSION = 5; // 解析結果の形が変わったら上げる(古いキャッシュを捨てて再解析させる)
+const CACHE_VERSION = 6; // 解析結果の形が変わったら上げる(古いキャッシュを捨てて再解析させる)
 
 export { defaultPaths };
 

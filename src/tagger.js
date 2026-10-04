@@ -1,4 +1,6 @@
 // LLMを使わないルールベースの要約・タグ付け。APIキーが無いときの既定動作。
+import { clipMasked } from './mask.js';
+
 const WORK_TYPES = [
   ['バグ修正', /バグ|不具合|修正して|直して|エラー|落ちる|動かない|fix|bug|error|crash|broken|fails?\b/i],
   ['リファクタ', /リファクタ|整理して|共通化|refactor|clean ?up|simplify/i],
@@ -41,7 +43,7 @@ export function heuristicSummary(session) {
   const parts = [];
   if (session.firstPrompt) {
     const p = session.firstPrompt.replace(/\s+/g, ' ').trim();
-    parts.push(`依頼: ${p.length > 140 ? p.slice(0, 140) + '…' : p}`);
+    parts.push(`依頼: ${clipMasked(p, 140)}`);
   }
   const acts = [];
   if (session.changedFiles?.length) acts.push(`${session.changedFiles.length}ファイルを変更`);

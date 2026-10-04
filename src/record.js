@@ -1,5 +1,6 @@
 // Claude Code 以外のツールのログを、parser.js と同じ形のセッションレコードにまとめるための共通部品。
 // 各取り込み元(gemini.js / copilot.js / aider.js / cursor.js)は、ログから collector に材料を積み、finish() でレコードにする。
+import { clipMasked } from './mask.js';
 import path from 'node:path';
 import { buildSegments, gitCommandKind, parseCommitOutput, projectNameFrom } from './parser.js';
 
@@ -81,7 +82,7 @@ export function addUsage(c, at, model, u) {
 function titleOf(text) {
   const line = (text || '').split('\n').find((l) => l.trim()) || '';
   const clean = line.replace(/^\s*(?:#{1,6}\s+|>\s*)/, '').replace(/[*`]/g, '').trim();
-  return clean.length > 60 ? clean.slice(0, 60) + '…' : clean;
+  return clipMasked(clean, 60);
 }
 
 // collector をセッションレコードにする(parser.js / codex.js と同じ形)

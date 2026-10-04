@@ -1,4 +1,5 @@
 // Claude Code のセッションログ(JSONL)を1セッション分の集計レコードに変換する。
+import { clipMasked } from './mask.js';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -269,7 +270,7 @@ function firstLine(text) {
   const line = text.split('\n').find((l) => l.trim()) || '';
   // 見出しや引用の記号(行頭の # や >)と、強調・コードの記号だけを落とす。"acme/api#12" の # は残す
   const clean = line.replace(/^\s*(?:#{1,6}\s+|>\s*)/, '').replace(/[*`]/g, '').trim();
-  return clean.length > 60 ? clean.slice(0, 60) + '…' : clean;
+  return clipMasked(clean, 60);
 }
 
 export async function parseSessionFile(file, projectDir) {

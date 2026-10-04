@@ -108,3 +108,12 @@ test('タイトルは行頭の見出し記号だけを落とす', () => {
   assert.equal(mk('## **目的** を整理'), '目的 を整理');
   assert.equal(mk('> 引用から'), '引用から');
 });
+
+test('タイトルは伏せてから切り詰める(途中で切れたトークンの一部を残さない)', () => {
+  // 60 文字目がトークンの途中に来る依頼(実際の Mattermost への送信で見つかった)
+  const prompt = `${'あ'.repeat(40)} ghp_abcdefghijklmnopqrstuvwxyz0123456789 を直す`;
+  const s = parseSessionText(JSON.stringify({ type: 'user', sessionId: 's', timestamp: '2026-10-04T00:00:00Z', message: { role: 'user', content: prompt } }), { file: '/x/s.jsonl' });
+  assert.doesNotMatch(s.title, /ghp_/);
+  assert.match(s.title, /\[GITHUB_TOKEN\]/);
+  assert.doesNotMatch(heuristicSummary({ ...s, firstPrompt: prompt.repeat(3) }).summary || '', /ghp_/);
+});
