@@ -43,7 +43,8 @@ function issueInfo(t) {
   if (t.issue) {
     const labels = t.issue.labels.map((l) => `<span class="label">${l.color ? `<span class="dot" style="background:#${esc(l.color)}"></span>` : ''}${esc(l.name)}</span>`).join('');
     const who = t.issue.assignees.length ? `<span class="small">担当 ${t.issue.assignees.map(esc).join(', ')}</span>` : '';
-    return `<div class="issue">${issueState(t.issue)} <span class="issue-title">${esc(t.issue.title)}</span></div><div class="issue-meta">${labels}${who}</div>`;
+    const prio = t.issue.priority && t.issue.priority !== 'No priority' ? `<span class="small">優先度 ${esc(t.issue.priority)}</span>` : '';
+    return `<div class="issue">${issueState(t.issue)} <span class="issue-title">${esc(t.issue.title)}</span></div><div class="issue-meta">${labels}${who}${prio}</div>`;
   }
   if (t.issueError) return `<div class="small">${esc(PROVIDER_LABEL[t.provider] || '')}: ${esc(ISSUE_ERROR[t.issueError] || t.issueError)}</div>`;
   return '';

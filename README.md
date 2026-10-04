@@ -8,7 +8,7 @@ Claude Code の作業履歴を `~/.claude/projects/` 配下の JSONL から自�
 
 - 依存パッケージなし(Node.js 20 以上)
 - `127.0.0.1` のみで待ち受け。Host が `127.0.0.1` / `localhost` 以外の要求は断ります(DNS リバインディング対策)。書き込み系(POST)は、自分以外の Origin からの要求を断ります(他サイトからの CSRF 対策)。hooks からの通知は Origin を付けないので通ります
-- ログは外部に送信しません。LLM 要約だけはオプトインで、送信前に秘匿情報をマスキングします。GitHub の issue / PR の情報取得とコメント投稿も任意で、取得はタスクIDの検出結果をもとに GitHub API へ問い合わせるだけです(「GitHub Issues 連携」を参照)
+- ログは外部に送信しません。LLM 要約だけはオプトインで、送信前に秘匿情報をマスキングします。課題管理サービス(GitHub / GitLab / Linear / Jira / Backlog)の課題の情報取得とコメント投稿も任意で、取得はタスクIDの検出結果をもとに各サービスの API へ問い合わせるだけです(「課題管理サービス連携」を参照)
 - Claude Code と Codex CLI の両方のログを、同じカレンダーとコストの画面で扱います(ツールで絞り込めます)
 - ログの変更をファイル監視で検知し、画面を自動更新します
 - Claude Code の hooks に登録すると、作業中・入力待ちの状態をリアルタイムに表示します(任意)
@@ -45,6 +45,17 @@ npm test                           # テストを実行
 | `GH_TOKEN` | `GITHUB_TOKEN` が未設定のときに使うトークン |
 | `WORKLOG_GITHUB_NO_GH=1` | トークンが環境変数に無いとき、GitHub CLI(`gh auth token`)を呼びません |
 | `WORKLOG_GITHUB_API` | GitHub API の URL。既定は `https://api.github.com` |
+| `GITLAB_TOKEN` | GitLab のトークン(`PRIVATE-TOKEN` ヘッダーで送ります)。無くても公開プロジェクトは読めます |
+| `GITLAB_URL` | GitLab の接続先。既定は `https://gitlab.com`(`tasks.gitlab.baseUrl` が優先) |
+| `LINEAR_API_KEY` | Linear の個人 API キー。未設定なら Linear には問い合わせません |
+| `JIRA_BASE_URL` | Jira の URL(`tasks.jira.baseUrl` が優先)。未設定なら Jira には問い合わせません |
+| `JIRA_EMAIL` | Jira Cloud のメールアドレス。`JIRA_API_TOKEN` と組で使います |
+| `JIRA_API_TOKEN` | Jira Cloud の API トークン |
+| `JIRA_PAT` | Jira Server / Data Center の個人アクセストークン |
+| `BACKLOG_SPACE` | Backlog のスペース(例: `<space>.backlog.jp`。`tasks.backlog.space` が優先) |
+| `BACKLOG_API_KEY` | Backlog の API キー(`Backlog-API-Key` ヘッダーで送ります) |
+| `WORKLOG_LINEAR_API` | Linear の API の URL。主にテスト用です。既定は `https://api.linear.app/graphql` |
+| `WORKLOG_BACKLOG_API` | Backlog の API のベース URL。主にテスト用です。既定は `https://<スペース>/api/v2` |
 | `PORT` | 待ち受けポート(`--port` が優先) |
 
 ## Codex 対応
@@ -190,12 +201,15 @@ Claude Code on the web などのクラウドセッションは、ユーザーの
 
 ## タスク管理連携
 
-ログの中にあるタスクIDを見つけて、セッションに紐付けます。ID の検出とリンクの生成は、外部サービスに接続しません。GitHub の issue / PR についてだけ、任意で GitHub API から情報を取得します(「GitHub Issues 連携」を参照)。Linear / Jira などの API には接続しません。
+ログの中にあるタスクIDを見つけて、セッションに紐付けます。ID の検出とリンクの生成は、外部サービスに接続しません。解決できた課題についてだけ、任意で各サービスの API から情報を取得します(「課題管理サービス連携」を参照)。
 
 ### 拾う場所と形式
 
 - 場所: 依頼文、ブランチ名、コミットの件名(Claude Code や Codex が実行して成功したもの)です。
-- 形式: `ABC-123`、`#123`、`owner/repo#123`、`GH-123`、GitHub の issue / PR の URL、Linear の issue URL、Jira の browse URL です。ブランチ名は `123-xxx`、`feature/123-xxx`、`fix/ABC-123-xxx` の形を拾います。
+- 形式: `ABC-123`、`#123`、`owner/repo#123`、`GH-123`、`!123`、`group/project!123`、GitHub の issue / PR の URL、GitLab の issue / MR の URL(`…/-/issues/123`、`…/-/merge_requests/123`)、Linear の issue URL、Jira の browse URL、Backlog の `/view/` URL です。ブランチ名は `123-xxx`、`feature/123-xxx`、`fix/ABC-123-xxx` の形を拾います。
+- `!123` と `group/project!123` は GitLab のマージリクエストです。セッションのリポジトリが GitLab でなければ、解決の段階で捨てます(GitHub のリポジトリでは意味が無いため)。
+- `ABC-123` のプレフィックスには `_` も使えます(`MY_APP-12` など)。ブランチ名では `_` を区切りとして扱うので、`_` を含むキーは拾いません。
+- GitLab の URL はグループを入れ子にできるため、`/-/` の手前までをプロジェクトのパスとみなします(サブグループ対応)。
 
 誤検出の対策:
 
@@ -205,8 +219,9 @@ Claude Code on the web などのクラウドセッションは、ユーザーの
 
 ### リンク先
 
-- `#123` は、セッションのリポジトリが GitHub なら `owner/repo#123` に解決し、issue へのリンクを付けます。リポジトリは、Claude Code は作業ディレクトリの git remote(origin)、Codex はログの `repository_url` から決めます。PR 番号でも GitHub が転送します。
-- `ABC-123` のようなキー形式は、ログに URL があればそれをリンク先にします。無ければ `config.json` の設定を使います。どちらも無いとリンクにならず、IDだけを表示します。
+- `#123` は、セッションのリポジトリが GitHub なら `owner/repo#123` に解決し、issue へのリンクを付けます。リポジトリが、設定した GitLab のホストにあるときは `group/project#123` に解決し、GitLab の issue へのリンクを付けます(`!123` は MR)。リポジトリは、Claude Code は作業ディレクトリの git remote(origin)、Codex はログの `repository_url` から決めます。PR 番号でも GitHub が転送します。
+- `ABC-123` のようなキー形式は、ログに URL があればそれをリンク先にします。無ければ、振り分けたサービスの接続先の設定(Jira の `baseUrl`、Backlog の `space`、Linear の `workspace`)から作ります。それも無ければ `config.json` の `keyUrl` / `urls` を使います。どれも無いとリンクにならず、IDだけを表示します。
+- どのサービスの課題かは、「課題管理サービス連携」の「`ABC-123` 形式の振り分け」で決めます。
 
 ### 設定
 
@@ -228,7 +243,8 @@ Claude Code on the web などのクラウドセッションは、ユーザーの
 - `deny`: 除外するプレフィックスを、組み込みの除外に追加します。
 - `keyUrl`: キー形式のリンク先です。`{id}` がタスクIDに置き換わります。
 - `urls`: プレフィックスごとのリンク先です。`keyUrl` より優先します。
-- `github`: `false` にすると、`#123` 系(`owner/repo#123`、`GH-123`、GitHub の URL、番号だけのブランチ名)を拾いません。
+- `github`: `false` にすると、`#123` 系(`owner/repo#123`、`GH-123`、GitHub の URL、番号だけのブランチ名)と、GitLab の `!123`・URL も拾いません。
+- `gitlab` / `linear` / `jira` / `backlog`: サービスごとの接続先とキーのプレフィックスです(「課題管理サービス連携」を参照)。
 
 ### 手動の付け外し
 
@@ -251,51 +267,135 @@ Claude Code on the web などのクラウドセッションは、ユーザーの
 
 キーワード検索は、タスクIDでも引けます。API では `/api/sessions?task=ID` で絞り込めます(`GET /api/tasks` はタスクごとの集計です)。
 
-### GitHub Issues 連携
+### 課題管理サービス連携(GitHub / GitLab / Linear / Jira / Backlog)
 
-`owner/repo#123` に解決できたタスクについて、GitHub API から issue / PR の情報を取得して表示します。設定は要りません。トークンが無くても、公開リポジトリなら読めます。
+解決できたタスクについて、各サービスの API から課題の情報を取得して表示します。GitHub と GitLab は設定なしで使えます(トークンが無くても公開リポジトリ・公開プロジェクトなら読めます)。Linear / Jira / Backlog は、接続先や認証情報を設定したときだけ問い合わせます。
 
-取得する内容:
+共通の動作:
 
-- タイトル、状態、ラベル(ラベルの色付き)、担当者です。
-- 状態は、Issue が Open / Closed、PR が Open / Draft / Merged / Closed です。`not_planned` で閉じた issue は、完了で閉じたものと色を分けます。色だけに頼らず、文字でも示します。
-- タスクビューでは、タスク欄にタイトル・状態・ラベル・担当者を表示します。詳細パネルの「タスク」欄は、状態を表示し、タイトルはホバーで見られます。
-- 取れなかったときは、タスクビューに理由を表示します(見つからないか権限がない(404)、API 制限中、タイムアウト、接続できない)。それ以外の HTTP エラーは、ステータスコードを表示します。
+- 取得する内容は、タイトル、状態、ラベル、担当者です。Linear は優先度も取得し、タスクビューに表示します。ラベルは、色があるもの(GitHub / GitLab / Linear)は色付きで表示します。
+- 状態は、各サービスの状態名をそのまま表示します(「Open」「In Review」「完了」など)。色は次の4分類で付けます。色だけに頼らず、文字でも示します。
 
-認証:
+  | 分類 | 色 |
+  | --- | --- |
+  | 未着手 | 緑 |
+  | 進行中 | 青 |
+  | 完了 | 紫 |
+  | 中止・見送り | 灰 |
 
+- タスクビューでは、タスク欄にサービス名・タイトル・状態・ラベル・担当者を表示します。詳細パネルの「タスク」欄は、状態を表示し、タイトルはホバーで見られます。
+- 取れなかったときは、タスクビューにサービス名と理由を表示します(見つからないか権限がない、認証情報が無いか正しくない、読む権限がない、API 制限中、タイムアウト、接続できない)。それ以外の HTTP エラーは、ステータスコードを表示します。
+- 結果は `~/.work-log/` にサービスごとのファイル `tracker-<name>.json`(`tracker-gitlab.json`、`tracker-linear.json`、`tracker-jira.json`、`tracker-backlog.json`)で保存します。GitHub だけは従来どおり `github.json` です。
+- 再確認までの時間は、進行中(未着手を含む)が 10 分、完了・中止が 1 日、取得に失敗したものが 30 分です。
+- API 制限に達したら、解除の時刻まで、そのサービスには問い合わせません。
+- 画面は取得を最大約 2.5 秒だけ待ちます。それ以上かかる分は裏で取得を続け、取れたら画面を自動更新します。同時に取得するのは 4 件までです(1 回のリクエストは 8 秒でタイムアウトします)。
+- 認証情報(トークン、API キー)はサーバー側だけで使い、ブラウザには渡しません。ブラウザに渡すのは、接続先が決まっているか、認証情報があるか、API 制限中かどうかだけです(`GET /api/config` の `trackers`。GitHub は従来の `github` も残しています)。
+
+#### サービスごとの設定
+
+接続先とキーのプレフィックスは、環境変数と `config.json` の `tasks.<サービス名>` のどちらでも設定できます(両方あるときは `config.json` が優先です)。認証情報は環境変数だけです。
+
+| サービス | 環境変数 | config.json(`tasks.<name>`) | 必須 |
+| --- | --- | --- | --- |
+| GitHub | `GITHUB_TOKEN` / `GH_TOKEN` / `gh auth token` | なし(`tasks.github: false` で無効) | 不要(トークン無しは公開リポジトリのみ) |
+| GitLab | `GITLAB_TOKEN`、`GITLAB_URL` | `gitlab.baseUrl` | 不要(トークン無しは公開プロジェクトのみ) |
+| Linear | `LINEAR_API_KEY` | `linear.keys`、`linear.workspace` | `LINEAR_API_KEY` |
+| Jira | `JIRA_BASE_URL`、`JIRA_EMAIL` + `JIRA_API_TOKEN`、`JIRA_PAT` | `jira.baseUrl`、`jira.keys` | 接続先と認証情報 |
+| Backlog | `BACKLOG_SPACE`、`BACKLOG_API_KEY` | `backlog.space`、`backlog.keys` | スペースと `BACKLOG_API_KEY` |
+
+```json
+{
+  "tasks": {
+    "gitlab": { "baseUrl": "https://gitlab.example.com" },
+    "linear": { "keys": ["<PREFIX>"], "workspace": "<workspace>" },
+    "jira": { "baseUrl": "https://<your-site>.atlassian.net", "keys": ["<PREFIX>"] },
+    "backlog": { "space": "<space>.backlog.jp", "keys": ["<PREFIX>"] }
+  }
+}
+```
+
+認証情報(トークン、API キー)は `config.json` に書かず、環境変数で渡します。
+
+#### `ABC-123` 形式の振り分け
+
+`ABC-123` のようなキー形式は、Linear・Jira・Backlog のどれの課題か分からないので、次の順で決めます。
+
+1. ログ中の URL のホスト: `linear.app` は Linear、`*.backlog.jp` / `*.backlog.com`(`backlogtool` のドメインも)は Backlog、`/browse/` を含み `*.atlassian.net` か設定した Jira のホストなら Jira です。
+2. `tasks.<サービス>.keys` のプレフィックス(Linear、Jira、Backlog の順に調べます)。
+3. 設定済みのキー形式のサービスが 1 つだけならそのサービス。「設定済み」は、Linear は `LINEAR_API_KEY` があるとき、Jira は接続先 URL があるとき、Backlog はスペースがあるときです。
+4. 決まらなければ、リンクのみにします(従来の `keyUrl` / `urls`)。情報は取得しません。
+
+#### GitHub
+
+`owner/repo#123` に解決できたタスクが対象です。
+
+- 状態は、Issue が Open / Closed、PR が Open / Draft / Merged / Closed です。分類は、Draft の PR が進行中、Merged と完了で閉じた issue が完了、マージせずに閉じた PR と `not_planned` で閉じた issue が中止・見送りです。
 - トークンは `GITHUB_TOKEN`、`GH_TOKEN`、`gh auth token`(GitHub CLI)の順に探します。`WORKLOG_GITHUB_NO_GH=1` を設定すると、`gh` は呼びません。
 - どれも無ければ未認証です。公開リポジトリだけ読め、API の上限は小さくなります。
-- トークンはサーバー側だけで使い、ブラウザには渡しません。ブラウザに渡すのは、トークンがあるかどうかだけです(`GET /api/config` の `github`)。
-- `WORKLOG_GITHUB_API` で API の URL を変えられます(GitHub Enterprise Server の API など)。ただし、`#123` からリポジトリを決める処理は github.com のリモートだけに対応しています。GitHub Enterprise Server の issue をこの連携で扱うには、`owner/repo#123` と書く必要があります(リンク先 URL も github.com になります)。
-
-キャッシュと API 制限:
-
-- 結果は `github.json` に保存します。再確認までの時間は、開いている issue が 10 分、閉じたものが 1 日、取得に失敗したものが 30 分です。
 - 再確認は ETag の条件付きリクエストで行います。304 は API の制限を消費しません。
-- API 制限に達したら、解除の時刻まで問い合わせません。
-- 画面は取得を最大約 2.5 秒だけ待ちます。それ以上かかる分は裏で取得を続け、取れたら画面を自動更新します。同時に取得するのは 4 件までです(1 回のリクエストは 8 秒でタイムアウトします)。
+- `WORKLOG_GITHUB_API` で API の URL を変えられます(GitHub Enterprise Server の API など)。ただし、`#123` からリポジトリを決める処理は github.com のリモートだけに対応しています。GitHub Enterprise Server の issue をこの連携で扱うには、`owner/repo#123` と書く必要があります(リンク先 URL も github.com になります)。
+- リポジトリ名は GitHub の命名規則で検証してから、API の URL に使います。合わない名前は問い合わせません。
+- ラベルの色は 6 桁の 16 進数のものだけを使います。それ以外は色を付けません(GitLab / Linear のラベルも同じです)。
 
-作業記録のコメント:
+#### GitLab
 
-issue / PR に、そのタスクの作業記録をコメントとして投稿できます。
+issue(`#123`)と マージリクエスト(`!123`)が対象です。
 
-1. タスクビューで GitHub のタスクを▸で展開し、「この issue(PR)に作業記録をコメント…」を押します。
-2. 確認ダイアログに、投稿される本文がそのまま表示されます。本文は、セッションの開始時刻・タイトル・ツール・作業時間・コミット数(とハッシュ)の表と、合計です。時刻はブラウザのタイムゾーンで書きます。
+- 接続先は `tasks.gitlab.baseUrl`、無ければ `GITLAB_URL`、既定は `https://gitlab.com` です。トークンは `GITLAB_TOKEN` を `PRIVATE-TOKEN` ヘッダーで送ります。トークン無しでも公開プロジェクトは読めます。
+- `#123` と `!123` は、リポジトリのリモートが設定した GitLab のホストのときだけ API に問い合わせます。それ以外の GitLab らしいホスト(ホスト名に `gitlab.` を含むもの)は、リンクだけです。URL で書かれた issue / MR も、ホストが設定と一致したときだけ取得します。
+- サブグループ(`group/subgroup/project`)に対応します。プロジェクトのパスは `%2F` でエンコードして API に渡します。
+- 状態は、issue が Open / Closed(閉じたら完了)、MR が Open / Merged / Closed / Locked です。分類は、Draft の MR が進行中、Merged が完了、Closed と Locked が中止・見送りです。GitLab には完了と見送りの区別が無いので、閉じた issue は完了とみなします。
+- 再確認は GitHub と同じく ETag の条件付きリクエストです。
+
+#### Linear
+
+- `LINEAR_API_KEY` に個人 API キーを設定します。Bearer を付けずに `Authorization` ヘッダーでそのまま送ります(`lin_oauth` で始まる OAuth トークンだけ Bearer を付けます)。キーが無ければ問い合わせません。
+- 識別子(`ABC-123`)のまま GraphQL API の `issue(id:)` に渡して取得します。
+- 状態は Linear のワークフローの状態名を表示します。分類は、triage / backlog / unstarted が未着手、started が進行中、completed が完了、canceled / duplicate が中止・見送りです。
+- `tasks.linear.keys` はキーのプレフィックスです。`tasks.linear.workspace` を設定すると、取得する前から `https://linear.app/<workspace>/issue/<ID>` のリンクを付けます。取得後は、Linear が返す URL を使います。
+
+#### Jira
+
+- 接続先は `tasks.jira.baseUrl` か `JIRA_BASE_URL` で、必須です。
+- Jira Cloud は `JIRA_EMAIL` + `JIRA_API_TOKEN`(Basic 認証)、Server / Data Center は `JIRA_PAT`(Bearer)です。両方あれば Basic が先です。
+- REST API v2(`/rest/api/2/issue/<キー>`)を使います。
+- 状態は Jira の状態名を表示します。分類は、状態のカテゴリが new なら未着手、indeterminate なら進行中、done なら完了です。Jira には中止・見送りのカテゴリが無いので、この分類にはなりません。
+- `tasks.jira.keys` はキーのプレフィックスです。リンク先は `<baseUrl>/browse/<ID>` です。
+
+#### Backlog
+
+- スペースは `tasks.backlog.space` か `BACKLOG_SPACE` で設定します(例: `<space>.backlog.jp`。`https://` は付けても外します)。`.backlog.jp` / `.backlog.com`(`backlogtool` のドメインも)のホストだけ受け付け、それ以外は無効です。
+- API キーは `BACKLOG_API_KEY` です。URL ではなく `Backlog-API-Key` ヘッダーで送ります(URL に載せないので、ログやプロキシに残りにくくなります)。キーが無ければ問い合わせません。
+- 状態は Backlog の状態名を表示します。分類は、標準の状態で 未対応が未着手、処理中・処理済みが進行中、完了が完了です。プロジェクトで追加した状態は進行中とみなします。ラベルには、課題のカテゴリを表示します。
+- `tasks.backlog.keys` はプロジェクトキーのプレフィックスです。リンク先は `https://<スペース>/view/<ID>` です。
+
+#### 作業記録のコメント
+
+課題に、そのタスクの作業記録をコメントとして投稿できます。対象は GitHub に限らず、GitLab・Linear・Jira・Backlog の課題です。
+
+1. タスクビューでタスクを▸で展開し、「<サービス> の <ID> に作業記録をコメント…」を押します。ボタンは、課題の情報が取得できたタスクにだけ出ます(まだ取得できていない課題や、見つからない課題には出ません)。
+2. 確認ダイアログに、投稿される本文がそのまま表示されます。本文は、セッションの開始時刻・タイトル・ツール・作業時間・コミット数(とハッシュ)と、合計です。時刻はブラウザのタイムゾーンで書きます。
 3. 「投稿する」を押したときだけ投稿します。「やめる」では何も送りません。
+
+本文の書式は、サービスに合わせて 3 通りに書き分けます。
+
+| サービス | 書式 |
+| --- | --- |
+| GitHub / GitLab / Linear | Markdown の表 |
+| Jira | Wiki 記法の表。`\|`、`{`、`}`、`[`、`]` は記法として解釈されるため、全角にします |
+| Backlog | 箇条書きのプレーンテキスト。プロジェクトの記法が Backlog 記法でも Markdown でも崩れないよう、表を使いません |
 
 - 本文は秘匿情報をマスキングします(`WORKLOG_NO_MASK=1` の対象外です)。
 - プレビューの後にセッションが進むなどして内容が変わったときは、投稿せずに、もう一度確認するよう求めます。
-- 投稿にはトークンが必要です(issue にコメントできる権限)。無いときは、ダイアログを出さずにそう表示します。
-- 見つからない issue(404)には、ボタンを出しません。
-- コメントは、そのリポジトリを見られる人全員が読めます。公開リポジトリなら誰でも読めるので、内容を確認してから投稿してください。
+- 投稿には認証情報が必要です(課題にコメントできる権限)。無いときは、ダイアログを出さずにそう表示します。
+- 投稿後は、投稿したコメントへのリンクを表示します。画面の自動更新で描き直しても残ります(ページを再読み込みすると消えます)。
+- コメントは、その課題を見られる人全員が読めます。公開リポジトリや公開プロジェクトなら誰でも読めるので、内容を確認してから投稿してください。
 
-セキュリティ:
+#### 動作確認
 
-- リポジトリ名は GitHub の命名規則で検証してから、API の URL に使います。合わない名前は問い合わせません。
-- ラベルの色は 6 桁の 16 進数のものだけを使います。それ以外は色を付けません。
-
-動作確認: GitHub API の応答形式は、テストの偽サーバーで確認しています。実際の API には、「見つからない」の応答まで接続して確認しました。この開発環境の制約で、実在する issue の取得とコメントの投稿は、実際の API では確認していません。
+- GitLab: 実際の公開 API で、issue、MR、見つからないもの、ETag の再確認(304)まで確認しました。コメントの投稿は、実際の API では確認していません。
+- GitHub: 応答形式はテストの偽サーバーで確認しています。実際の API には、「見つからない」の応答まで接続して確認しました。実在する issue の取得とコメントの投稿は、実際の API では確認していません。
+- Linear / Jira / Backlog: この開発環境から接続できないため、実際のサービスでは確認していません。公式の SDK / ドキュメント(`@linear/sdk` の型定義、gitlabhq の `doc/api`、nulab/backlog-js、jira.js)に合わせた偽サーバーとテストでだけ確認しています。実際に使うときは、まず取得の表示から確かめてください。
 
 ## 各値の算出方法
 
@@ -321,7 +421,8 @@ issue / PR に、そのタスクの作業記録をコメントとして投稿で
 - `pricing.json`: 単価表の上書きです(任意、利用者が作成)。形式は「コスト」の「単価表の上書き」を参照してください。
 - `config.json`: タスク管理連携の設定です(任意、利用者が作成)。形式は「タスク管理連携」の「設定」を参照してください。
 - `links.json`: 詳細パネルから手で付け外ししたタスクです。
-- `github.json`: GitHub の issue / PR の取得結果(ETag を含む)です。形式と再確認の間隔は「タスク管理連携」の「GitHub Issues 連携」を参照してください。
+- `github.json`: GitHub の issue / PR の取得結果(ETag を含む)です。形式と再確認の間隔は「タスク管理連携」の「課題管理サービス連携」を参照してください。
+- `tracker-<name>.json`: GitLab / Linear / Jira / Backlog の課題の取得結果です(`tracker-gitlab.json` など。GitLab は ETag を含む)。再確認の間隔は GitHub と同じです。
 
 ## ディレクトリ構成
 
@@ -336,7 +437,12 @@ src/
   install.js     Claude Code の settings.json へのフックの登録・削除
   git.js         Git 連携。リポジトリを読み取り専用で参照し、コミットをセッションに紐付ける
   tasks.js       タスク管理連携。ログからタスクIDを見つけ、リンク先を決める
-  github.js      GitHub Issues 連携。issue / PR の取得とキャッシュ、作業記録コメントの投稿
+  github.js      GitHub 連携。issue / PR の取得と作業記録コメントの投稿(trackers/base.js の共通部分を使う)
+  worklog.js     課題に投稿する作業記録のコメント本文。Markdown / Jira 記法 / プレーンテキストの3書式
+  trackers/      課題管理サービス連携
+    base.js        共通部分。キャッシュ、再確認の間隔、API 制限中の停止、同時取得数、タイムアウト
+    providers.js   GitLab / Linear / Jira / Backlog の取得とコメント投稿
+    index.js       サービスの一覧、設定の反映、`ABC-123` 形式の振り分け、タスクへの課題情報の付与
   filter.js      セッション一覧の絞り込み(期間・プロジェクト・タグ・ツール・タスク・キーワード)
   parser.js      JSONL を 1 セッションの集計レコードに変換
   codex.js       Codex CLI のログ(rollout)を同じ集計レコードに変換。.zst の読み込みも担当
