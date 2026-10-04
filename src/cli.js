@@ -3,7 +3,7 @@
 //   work-log                 サーバーを起動 (http://127.0.0.1:4317)
 //   work-log scan            ログを解析してセッション一覧を表示
 //   work-log summarize [ID]  LLMで要約(IDを省略すると未要約のものをすべて)
-//   work-log report [--week] [--date YYYY-MM-DD] [--slack]  日報・週報を表示(--slack で Slack に送る)
+//   work-log report [--week] [--date YYYY-MM-DD] [--slack] [--discord]  日報・週報を表示(--slack / --discord で送る)
 //   work-log hooks install   Claude Code の hooks に登録(uninstall / status も可)
 //   work-log hook            hooks から呼ばれる受け口(手動では使わない)
 import { defaultPaths } from './paths.js';
@@ -84,12 +84,13 @@ if (cmd === 'scan') {
   // cron などから定期的に送れるよう、--slack は確認なしで送る(本文はマスキング済み)
   const { plainFromMrkdwn } = await import('./report.js');
   try {
-    const params = { period: args.includes('--week') ? 'week' : 'day', date: flag('date'), tz: flag('tz') || process.env.TZ };
-    const r = await store.report({ ...params, waitMs: 8000 });
-    console.log(plainFromMrkdwn(r.preview));
-    if (args.includes('--slack')) {
-      const sent = await store.slack.post({ text: r.text, blocks: r.blocks });
-      console.log(`Slack に送りました${sent.url ? `: ${sent.url}` : ''}`);
+    const params = { period: args.includes('--week') ? 'week' : 'day', date: flag('date'), tz: flag('tz') || process.env.TZ, waitMs: 8000 };
+    const targets = ['slack', 'discord'].filter((t) => args.includes(`--${t}`));
+    console.log(plainFromMrkdwn((await store.report({ ...params, target: 'slack' })).preview));
+    for (const t of targets) {
+      const r = await store.report({ ...params, target: t });
+      const sent = await store.destinations[t].post(r.message);
+      console.log(`${t === 'slack' ? 'Slack' : 'Discord'} に送りました${sent.url ? `: ${sent.url}` : ''}`);
     }
   } catch (err) {
     console.error(err.message);

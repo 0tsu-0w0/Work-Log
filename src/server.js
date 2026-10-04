@@ -4,14 +4,14 @@ import { readFile, writeFile, mkdir, watch } from 'node:fs/promises';
 import { rmSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { mask } from './mask.js';
+import { maskDeep } from './mask.js';
 import { filterSessions } from './filter.js';
 
 export { filterSessions };
 import { llmAvailable, DEFAULT_MODEL } from './summarizer.js';
 import { SERVER_FILE } from './hook.js';
 import { PRICING_AS_OF, PRICING_SOURCE } from './pricing.js';
-import { plainFromMrkdwn } from './report.js';
+import { plainFromMrkdwn, plainFromDiscord } from './report.js';
 import { status as hooksStatus, settingsPath } from './install.js';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
@@ -21,12 +21,6 @@ const LIST_FIELDS = [
   'messageCount', 'commits', 'workType', 'components', 'summarySource', 'cost',
 ];
 
-function maskDeep(v) {
-  if (typeof v === 'string') return mask(v);
-  if (Array.isArray(v)) return v.map(maskDeep);
-  if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, maskDeep(x)]));
-  return v;
-}
 
 async function readBody(req, limit = 64 * 1024) {
   let data = '';
@@ -65,6 +59,7 @@ export function createServer(store, { env = process.env } = {}) {
         github: await store.github.status(),
         trackers: await store.trackers.status(),
         slack: store.slack.status(),
+        discord: store.discord.status(),
       });
     }
     if (req.method === 'GET' && parts[1] === 'sessions' && parts.length === 2) {
@@ -115,16 +110,18 @@ export function createServer(store, { env = process.env } = {}) {
         return send(res, 400, { error: err.message });
       }
     }
-    // Slack の日報・週報: GET でプレビュー、POST { period, date, tz, hash } で送信
-    if (parts[1] === 'slack' && parts[2] === 'report') {
+    // 日報・週報: GET でプレビュー、POST { target, period, date, tz, hash } で送信。/api/slack/report は target=slack と同じ
+    if ((parts[1] === 'report' && parts.length === 2) || (parts[1] === 'slack' && parts[2] === 'report')) {
+      const fixed = parts[1] === 'slack' ? 'slack' : null;
       try {
         if (req.method === 'GET') {
-          const r = await store.report(Object.fromEntries(url.searchParams));
-          return send(res, 200, { preview: r.preview, previewText: plainFromMrkdwn(r.preview), hash: r.hash, totals: r.totals, slack: r.slack, range: { period: r.range.period, start: r.range.start } });
+          const r = await store.report({ ...Object.fromEntries(url.searchParams), ...(fixed ? { target: fixed } : {}) });
+          const previewText = r.target === 'discord' ? plainFromDiscord(r.preview) : plainFromMrkdwn(r.preview);
+          return send(res, 200, { target: r.target, preview: r.preview, previewText, hash: r.hash, totals: r.totals, status: r.status, slack: r.status, range: { period: r.range.period, start: r.range.start } });
         }
         if (req.method === 'POST') {
           const body = JSON.parse((await readBody(req)) || '{}');
-          return send(res, 200, await store.postReport({ period: body.period, date: body.date, tz: body.tz }, String(body.hash || '')));
+          return send(res, 200, await store.postReport({ target: fixed || body.target, period: body.period, date: body.date, tz: body.tz }, String(body.hash || '')));
         }
       } catch (err) {
         return send(res, err.status || 400, { error: err.message });

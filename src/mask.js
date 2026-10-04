@@ -20,3 +20,11 @@ export function mask(text) {
   for (const [re, rep] of PATTERNS) out = out.replace(re, rep);
   return out;
 }
+
+// オブジェクトの中の文字列をすべてマスキングする
+export function maskDeep(v) {
+  if (typeof v === 'string') return mask(v);
+  if (Array.isArray(v)) return v.map(maskDeep);
+  if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, maskDeep(x)]));
+  return v;
+}

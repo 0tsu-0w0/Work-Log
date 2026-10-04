@@ -214,12 +214,8 @@ function renderWeekStats() {
         </div>`).join('') || '<p class="hint">この週のセッションはありません。</p>'}
     </div>
     <p class="hint">ブロックを選ぶと、セッションの詳細を表示します。</p>
-    ${state.config?.slack?.configured
-      ? `<div class="slack-send"><span class="small">Slack(${esc(state.config.slack.destination)})に送る</span>
-          <button data-period="day">今日の日報…</button><button data-period="week">この週の週報…</button></div>
-          ${slackSent ? `<p class="small">${esc(slackSent.label)}を送りました${slackSent.url ? `: <a href="${esc(slackSent.url)}" target="_blank" rel="noopener noreferrer">Slack で開く</a>` : '。'}</p>` : ''}`
-      : '<p class="small">SLACK_WEBHOOK_URL などを設定すると、日報・週報を Slack に送れます。</p>'}`;
-  document.querySelectorAll('.slack-send button').forEach((b) => (b.onclick = () => sendReport(b.dataset.period, b)));
+    ${sendButtons()}`;
+  document.querySelectorAll('.slack-send button').forEach((b) => (b.onclick = () => sendReport(b.dataset.target, b.dataset.period, b)));
 }
 
 function weekActiveMs(s) {
@@ -421,33 +417,46 @@ const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 // 画面の自動更新で描き直しても、送った結果の表示は残す
 let slackSent = null;
+const DEST_LABEL = { slack: 'Slack', discord: 'Discord' };
+
+function sendButtons() {
+  const dests = ['slack', 'discord'].filter((t) => state.config?.[t]?.configured);
+  if (!dests.length) return '<p class="small">SLACK_WEBHOOK_URL や DISCORD_WEBHOOK_URL を設定すると、日報・週報を送れます。</p>';
+  return (
+    dests
+      .map((t) => `<div class="slack-send"><span class="small">${DEST_LABEL[t]}(${esc(state.config[t].destination)})に送る</span>
+        <button data-target="${t}" data-period="day">今日の日報…</button><button data-target="${t}" data-period="week">この週の週報…</button></div>`)
+      .join('') +
+    (slackSent ? `<p class="small">${esc(DEST_LABEL[slackSent.target])}に${esc(slackSent.label)}を送りました${slackSent.url ? `: <a href="${esc(slackSent.url)}" target="_blank" rel="noopener noreferrer">開く</a>` : '。'}</p>` : '')
+  );
+}
 
 // 日報・週報を Slack に送る。送る本文をそのまま見せ、確認してから送る
 function localDate(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-async function sendReport(period, button) {
+async function sendReport(target, period, button) {
   const msg = (text, cls = 'small') => button.parentElement.insertAdjacentHTML('afterend', `<p class="${cls}">${esc(text)}</p>`);
   const date = period === 'week' ? localDate(state.weekStart) : localDate(new Date());
-  const q = new URLSearchParams({ period, date, tz: TZ });
+  const q = new URLSearchParams({ target, period, date, tz: TZ });
   let preview;
   try {
-    preview = await api(`/api/slack/report?${q}`);
+    preview = await api(`/api/report?${q}`);
   } catch (err) {
     return msg(err.message, 'error');
   }
   const dlg = $('comment-dialog');
-  $('comment-title').textContent = `Slack(${preview.slack.destination})に${period === 'week' ? '週報' : '日報'}を送ります`;
-  $('comment-note').textContent = `次の内容が送られます(Slack では見出しが太字、タスクがリンクになります)。チャンネルの参加者全員が読めます。${preview.slack.includeCost ? 'API 換算コストを含みます。' : ''}`;
+  $('comment-title').textContent = `${DEST_LABEL[target]}(${preview.status.destination})に${period === 'week' ? '週報' : '日報'}を送ります`;
+  $('comment-note').textContent = `次の内容が送られます(${DEST_LABEL[target]} では見出しが太字、タスクがリンクになります)。チャンネルの参加者全員が読めます。${preview.status.includeCost ? 'API 換算コストを含みます。' : ''}`;
   $('comment-body').textContent = preview.previewText;
   dlg.showModal();
   dlg.onclose = async () => {
     if (dlg.returnValue !== 'post') return;
     button.disabled = true;
     try {
-      const r = await api('/api/slack/report', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ period, date, tz: TZ, hash: preview.hash }) });
-      slackSent = { label: period === 'week' ? '週報' : '日報', url: r.url };
+      const r = await api('/api/report', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ target, period, date, tz: TZ, hash: preview.hash }) });
+      slackSent = { target, label: period === 'week' ? '週報' : '日報', url: r.url };
       if (!state.selectedId) renderWeekStats();
     } catch (err) {
       msg(err.message, 'error');

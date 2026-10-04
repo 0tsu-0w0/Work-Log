@@ -155,3 +155,64 @@ export function sessionEndMessage(s, { includeCost = false } = {}) {
   const text = `セッション終了: *${esc(s.displayTitle || s.title)}*\n${parts.join('・')}${tasks.length ? `\nタスク: ${tasks.join(', ')}` : ''}`;
   return { text: `セッション終了: ${s.displayTitle || s.title}`, blocks: [{ type: 'section', text: { type: 'mrkdwn', text } }] };
 }
+
+// ---------------------------------------------------------------- Discord
+// Discord の Markdown で意味を持つ記号を逃がす(メンションは送信側で allowed_mentions を空にして止める)
+const dEsc = (s) => String(s ?? '').replace(/\n/g, ' ').replace(/([\\*_~`|>[\]()#-])/g, '\\$1');
+const dLink = (label, url) => (url ? `[${dEsc(label)}](${String(url).replace(/[()\s]/g, encodeURIComponent)})` : dEsc(label));
+const DISCORD_COLOR = 0xd97757; // 見出しの帯の色(画面のアクセント色と同じ)
+const LIMITS = { title: 256, description: 4096, footer: 2048, total: 6000, embeds: 10 };
+
+// 日報・週報を embeds にする。セクションごとに1つの embed、合計 6000 文字・10 個までに収める
+export function toDiscord(report, { includeCost = false, maxSessions = 20 } = {}) {
+  const { totals, range } = report;
+  const time = (iso) => new Intl.DateTimeFormat('ja-JP', { timeZone: range.timeZone, ...(range.period === 'week' ? { month: 'numeric', day: 'numeric' } : {}), hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
+  const summary = report.sessions.length
+    ? `作業 ${dur(totals.activeMs)}・${totals.sessions}セッション・${totals.commits}コミット${includeCost && totals.usd != null ? `・API 換算 $${totals.usd.toFixed(2)}` : ''}`
+    : 'この期間の作業はありません。';
+  const sections = [];
+  if (report.projects.length) sections.push(['プロジェクト別', report.projects.map((p) => `• ${dEsc(p.project)}  ${dur(p.activeMs)}(${p.sessions}セッション・${p.commits}コミット)`)]);
+  if (report.tasks.length) {
+    sections.push(['タスク', report.tasks.map((t) => `• ${dLink(t.label, t.url)}${t.issue ? ` ${dEsc(t.issue.title)}(${dEsc(t.issue.stateLabel)})` : ''}  ${dur(t.activeMs)}`)]);
+  }
+  if (report.sessions.length) {
+    const shown = report.sessions.slice(0, maxSessions);
+    const lines = shown.map((s) => `• ${time(s.start)} ${dEsc(s.title)} — ${dEsc(s.project)}・${dur(s.activeMs)}${s.commits ? `・${s.commits}コミット` : ''}${s.tool === 'codex' ? '(Codex)' : ''}`);
+    if (report.sessions.length > shown.length) lines.push(`ほか ${report.sessions.length - shown.length} セッション`);
+    sections.push(['セッション', lines]);
+  }
+  const footer = { text: 'ローカルの AI コーディングツールのセッションログから Work Log で作成' };
+  const embeds = [{ title: `Work Log ${title(range)}`.slice(0, LIMITS.title), description: summary, color: DISCORD_COLOR }];
+  let used = embeds[0].title.length + summary.length + footer.text.length;
+  for (const [name, lines] of sections) {
+    let desc = '';
+    let dropped = 0;
+    for (const l of lines) {
+      const next = desc ? `${desc}\n${l}` : l;
+      // 1つの embed の説明文の上限と、メッセージ全体の上限の両方に収める(収まらない行は件数だけ書く)
+      if (next.length > LIMITS.description - 40 || used + name.length + next.length > LIMITS.total - 80) dropped++;
+      else desc = next;
+    }
+    if (dropped) desc += `\n…ほか ${dropped} 行`;
+    if (!desc || embeds.length >= LIMITS.embeds) break;
+    embeds.push({ title: name, description: desc, color: DISCORD_COLOR });
+    used += name.length + desc.length;
+  }
+  embeds[embeds.length - 1].footer = footer;
+  const preview = embeds.map((e) => `**${e.title}**\n${e.description}`).join('\n\n');
+  return { content: '', embeds, preview };
+}
+
+export function sessionEndDiscord(s, { includeCost = false } = {}) {
+  const parts = [dEsc(s.project), dur(s.activeMs), `${s.commits}コミット`];
+  if (s.tool === 'codex') parts.push('Codex');
+  if (includeCost && s.cost) parts.push(`API 換算 $${s.cost.usd.toFixed(2)}`);
+  const tasks = (s.tasks || []).map((t) => dLink(t.label, t.url));
+  const description = `${parts.join('・')}${tasks.length ? `\nタスク: ${tasks.join(', ')}` : ''}`;
+  return { content: '', embeds: [{ title: `セッション終了: ${s.displayTitle || s.title}`.slice(0, LIMITS.title), description, color: DISCORD_COLOR }] };
+}
+
+// Discord の Markdown をプレーンテキストに戻す(画面のプレビュー・ターミナル用)
+export function plainFromDiscord(text) {
+  return text.replace(/\*\*/g, '').replace(/\[([^\]]*)\]\(([^)]+)\)/g, '$1 ($2)').replace(/\\([\\*_~`|>[\]()#-])/g, '$1');
+}
