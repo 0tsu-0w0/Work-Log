@@ -90,6 +90,9 @@ export function buildReport({ sessions, tasks = [], costs = null, range }) {
   };
 }
 
+// ドキュメント系の送り先(docreport.js)からも使う
+export { dur as formatDuration, title as reportTitle };
+
 function dur(ms) {
   const m = Math.round(ms / 60000);
   return m < 60 ? `${m}分` : `${Math.floor(m / 60)}時間${m % 60 ? `${m % 60}分` : ''}`;
