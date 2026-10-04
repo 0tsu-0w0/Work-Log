@@ -7,7 +7,7 @@ Claude Code の作業履歴を `~/.claude/projects/` 配下の JSONL から自�
 ## 特徴
 
 - 依存パッケージなし(Node.js 20 以上)
-- `127.0.0.1` のみで待ち受け
+- `127.0.0.1` のみで待ち受け。Host が `127.0.0.1` / `localhost` 以外の要求は断ります(DNS リバインディング対策)。書き込み系(POST)は、自分以外の Origin からの要求を断ります(他サイトからの CSRF 対策)。hooks からの通知は Origin を付けないので通ります
 - ログは外部に送信しません。LLM 要約だけはオプトインで、送信前に秘匿情報をマスキングします
 - Claude Code と Codex CLI の両方のログを、同じカレンダーとコストの画面で扱います(ツールで絞り込めます)
 - ログの変更をファイル監視で検知し、画面を自動更新します
@@ -184,6 +184,69 @@ Claude Code on the web などのクラウドセッションは、ユーザーの
 - リポジトリがない、または git がない場合は、ログから抽出したコミットだけを表示します。
 - 週の集計にコミット数を表示します。キーワード検索では、コミットのハッシュと件名も検索できます。
 
+## タスク管理連携
+
+GitHub / Linear / Jira などの外部サービスには接続しません。ログの中にあるタスクIDを見つけて、セッションに紐付けます。
+
+### 拾う場所と形式
+
+- 場所: 依頼文、ブランチ名、コミットの件名(Claude Code や Codex が実行して成功したもの)です。
+- 形式: `ABC-123`、`#123`、`owner/repo#123`、`GH-123`、GitHub の issue / PR の URL、Linear の issue URL、Jira の browse URL です。ブランチ名は `123-xxx`、`feature/123-xxx`、`fix/ABC-123-xxx` の形を拾います。
+
+誤検出の対策:
+
+- `UTF-8`、`ISO-8601`、`GPT-5`、`SHA-256` などの規格名・モデル名のプレフィックスは除外します(`src/tasks.js` の `DEFAULT_DENY`)。
+- ``` で囲まれたコードブロックの中は見ません。
+- `main` / `master` / `develop` ブランチは見ません。
+
+### リンク先
+
+- `#123` は、セッションのリポジトリが GitHub なら `owner/repo#123` に解決し、issue へのリンクを付けます。リポジトリは、Claude Code は作業ディレクトリの git remote(origin)、Codex はログの `repository_url` から決めます。PR 番号でも GitHub が転送します。
+- `ABC-123` のようなキー形式は、ログに URL があればそれをリンク先にします。無ければ `config.json` の設定を使います。どちらも無いとリンクにならず、IDだけを表示します。
+
+### 設定
+
+`~/.work-log/config.json`(`WORKLOG_CACHE_DIR` 配下、任意)に書きます。
+
+```json
+{
+  "tasks": {
+    "keys": ["WEB", "API"],
+    "deny": ["FOO"],
+    "keyUrl": "https://<your-site>.atlassian.net/browse/{id}",
+    "urls": { "WEB": "https://<your-site>.atlassian.net/browse/{id}" },
+    "github": true
+  }
+}
+```
+
+- `keys`: 指定すると、このプレフィックスのキーだけを拾います。
+- `deny`: 除外するプレフィックスを、組み込みの除外に追加します。
+- `keyUrl`: キー形式のリンク先です。`{id}` がタスクIDに置き換わります。
+- `urls`: プレフィックスごとのリンク先です。`keyUrl` より優先します。
+- `github`: `false` にすると、`#123` 系(`owner/repo#123`、`GH-123`、GitHub の URL、番号だけのブランチ名)を拾いません。
+
+### 手動の付け外し
+
+詳細パネルの「タスク」欄で操作します。
+
+- ×で外します。
+- 入力欄に ID や URL を入れて「紐付け」を押すと付けます。
+
+結果は `links.json` に保存します。外したものは、自動検出で見つかっても表示しません。
+
+### タスクビュー
+
+ヘッダーの「タスク」タブで、期間内に動いたセッションをタスクごとにまとめます。週 / 月の切り替えと、プロジェクト・ツールの絞り込みが効きます。
+
+- 列: タスク、見つけた場所、プロジェクト、セッション数、作業時間、コミット、コスト、期間です。
+- ▸で、紐付いたセッションを展開します。クリックすると詳細パネルを開きます。
+- 作業時間・コスト・コミットはセッション全体の値です。複数のタスクに紐付くセッションは、それぞれのタスクに数えます。
+
+### 検索
+
+キーワード検索は、タスクIDでも引けます。API では `/api/sessions?task=ID` で絞り込めます(`GET /api/tasks` はタスクごとの集計です)。
+
 ## 各値の算出方法
 
 - コミット数: Bash ツールで実行された `git commit` のうち、成功したものの数です。ヒアドキュメントの本文や文字列の中にある "git commit" は数えません。出力の `[branch hash] 件名` でハッシュを確認できたものと、エラーにならなかったがハッシュが出なかったもの(`-q` など)を数えます。失敗したもの(`nothing to commit` など)は数えません。
@@ -206,6 +269,8 @@ Claude Code on the web などのクラウドセッションは、ユーザーの
 - `hooks-state.json`: `events.jsonl` の取り込み位置と、セッションごとの最新状態です。
 - `server.json`: 起動中のサーバーのポートと PID です。フックが通知先を知るために使い、サーバーの終了時に削除します。
 - `pricing.json`: 単価表の上書きです(任意、利用者が作成)。形式は「コスト」の「単価表の上書き」を参照してください。
+- `config.json`: タスク管理連携の設定です(任意、利用者が作成)。形式は「タスク管理連携」の「設定」を参照してください。
+- `links.json`: 詳細パネルから手で付け外ししたタスクです。
 
 ## ディレクトリ構成
 
@@ -219,14 +284,17 @@ src/
   live.js        events.jsonl の取り込みと、作業中/入力待ち/完了の判定
   install.js     Claude Code の settings.json へのフックの登録・削除
   git.js         Git 連携。リポジトリを読み取り専用で参照し、コミットをセッションに紐付ける
+  tasks.js       タスク管理連携。ログからタスクIDを見つけ、リンク先を決める
+  filter.js      セッション一覧の絞り込み(期間・プロジェクト・タグ・ツール・タスク・キーワード)
   parser.js      JSONL を 1 セッションの集計レコードに変換
   codex.js       Codex CLI のログ(rollout)を同じ集計レコードに変換。.zst の読み込みも担当
   pricing.js     モデルの単価表と、利用量からの API 換算コストの計算。pricing.json による上書き
   tagger.js      ルールベースの作業種別・コンポーネント推定と要約
   summarizer.js  Claude API による要約 (オプトイン)
   mask.js        秘匿情報のマスキング
-public/          ブラウザ UI (index.html, app.js, costs.js, style.css)
+public/          ブラウザ UI (index.html, app.js, costs.js, tasks.js, style.css)
                  costs.js はコストビュー (KPI、日別の積み上げ棒、表)
+                 tasks.js はタスクビュー (タスクごとの集計表)
 test/            テスト
 docs/            ドキュメント (requirements.md)
 ```
