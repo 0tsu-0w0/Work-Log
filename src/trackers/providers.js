@@ -294,3 +294,170 @@ export class BacklogIssues extends CachedTracker {
     return { url: j.id ? `${this.viewUrl(r.id)}#comment-${j.id}` : this.viewUrl(r.id) };
   }
 }
+
+// ---------------------------------------------------------------- Notion
+// API の形は公式 SDK(@notionhq/client)に合わせている: Notion-Version 2025-09-03、Bearer 認証、
+// データベースは data_sources を通して問い合わせる(ID プロパティは unique_id フィルターの equals で探す)、
+// 状態のグループは data source の status.groups[].option_ids、コメントは POST /v1/comments(parent.page_id + rich_text)
+const NOTION_VERSION = '2025-09-03';
+const NOTION_COLORS = { gray: '9b9a97', brown: '937264', orange: 'd9730d', yellow: 'dfab01', green: '0f7b6c', blue: '0b6e99', purple: '6940a5', pink: 'ad1a72', red: 'e03e3e' };
+const SCHEMA_TTL_MS = 60 * 60 * 1000;
+
+// "0123abcd…"(32桁)を Notion の UUID 表記にそろえる
+export function notionUuid(hex) {
+  const h = String(hex || '').replace(/-/g, '').toLowerCase();
+  return /^[0-9a-f]{32}$/.test(h) ? `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}` : null;
+}
+
+// 状態のグループ名から分類する。既定のグループは To-do / In progress / Complete。名前に「中止」などがあれば中止扱い
+function notionCategory(group, name) {
+  if (/cancel|中止|見送|取り下げ|won'?t/i.test(name || '')) return 'canceled';
+  const g = String(group || '').toLowerCase();
+  if (/complete|done|完了/.test(g)) return 'done';
+  if (/progress|進行|対応中/.test(g)) return 'in_progress';
+  if (group) return 'open';
+  if (/done|complete|完了|済/i.test(name || '')) return 'done';
+  if (/progress|進行|対応中|review|レビュー/i.test(name || '')) return 'in_progress';
+  return 'open';
+}
+
+export class NotionPages extends CachedTracker {
+  constructor({ databaseId, dataSourceId, idProperty, keys, ...opts } = {}) {
+    super({ name: 'notion', label: 'Notion', ...opts });
+    this.apiBase = (this.env.WORKLOG_NOTION_API || 'https://api.notion.com').replace(/\/+$/, '');
+    this.databaseId = notionUuid(databaseId || this.env.NOTION_DATABASE_ID);
+    this.dataSourceId = notionUuid(dataSourceId || this.env.NOTION_DATA_SOURCE_ID);
+    this.idProperty = idProperty || null;
+    this.schemas = new Map(); // data source id -> { at, promise }
+  }
+  // ページURLから来たものはページID、ID プロパティ(TASK-12 など)から来たものはその ID で覚える
+  itemKey(r) {
+    return r.pageId || r.id;
+  }
+  valid(r) {
+    if (r.pageId) return Boolean(notionUuid(r.pageId));
+    return Boolean(this.databaseId || this.dataSourceId) && /^[A-Z][A-Z0-9_]{0,9}-\d{1,7}$/.test(r.id || '');
+  }
+  configured() {
+    return Boolean(this.token() && (this.databaseId || this.dataSourceId));
+  }
+  token() {
+    return this.env.NOTION_TOKEN || this.env.NOTION_API_KEY || null;
+  }
+  async authenticated() {
+    return Boolean(this.token());
+  }
+  headers() {
+    return { authorization: `Bearer ${this.token()}`, 'notion-version': NOTION_VERSION, accept: 'application/json' };
+  }
+  api(method, p, body) {
+    return this.http(method, `${this.apiBase}/v1/${p}`, {
+      headers: { ...this.headers(), ...(body ? { 'content-type': 'application/json' } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  }
+
+  // データベースのIDしか分からないときは、最初の data source を使う
+  async dataSource() {
+    if (this.dataSourceId) return this.dataSourceId;
+    if (!this.databaseId) return null;
+    const res = await this.api('GET', `databases/${this.databaseId}`);
+    if (!res.ok) return null;
+    this.dataSourceId = (await res.json()).data_sources?.[0]?.id || null;
+    return this.dataSourceId;
+  }
+
+  // data source のプロパティ定義(状態のグループ、ID プロパティの接頭辞)。1時間使い回す
+  schema(dsId, now = Date.now()) {
+    const hit = this.schemas.get(dsId);
+    if (hit && now - hit.at < SCHEMA_TTL_MS) return hit.promise;
+    const promise = this.api('GET', `data_sources/${dsId}`).then(async (res) => (res.ok ? (await res.json()).properties || {} : {}), () => ({}));
+    this.schemas.set(dsId, { at: now, promise });
+    return promise;
+  }
+
+  // "TASK-12" を、ID プロパティ(unique_id)で探してページIDにする
+  async findByUniqueId(id) {
+    const ds = await this.dataSource();
+    if (!ds) return { error: 'not_found' };
+    const [prefix, num] = [id.split('-')[0], Number(id.split('-').pop())];
+    const props = await this.schema(ds);
+    const prop =
+      this.idProperty ||
+      Object.entries(props).find(([, v]) => v.type === 'unique_id' && (v.unique_id?.prefix || '').toUpperCase() === prefix)?.[0] ||
+      Object.entries(props).find(([, v]) => v.type === 'unique_id')?.[0];
+    if (!prop) return { error: 'not_found' };
+    const res = await this.api('POST', `data_sources/${ds}/query`, { filter: { property: prop, unique_id: { equals: num } }, page_size: 1 });
+    if (!res.ok) return { res };
+    const page = (await res.json()).results?.[0];
+    return page ? { page } : { error: 'not_found' };
+  }
+
+  async fetchItem(r, entry, now) {
+    if (!this.token()) return { ...(entry || {}), error: 'unauthorized', fetchedAt: now };
+    let page;
+    if (r.pageId) {
+      const res = await this.api('GET', `pages/${notionUuid(r.pageId)}`);
+      if (!res.ok) return { ...(entry || {}), error: this.errorOf(res, now), fetchedAt: now };
+      page = await res.json();
+    } else {
+      const found = await this.findByUniqueId(r.id);
+      if (found.res) return { ...(entry || {}), error: this.errorOf(found.res, now), fetchedAt: now };
+      if (found.error) return { ...(entry || {}), error: found.error, fetchedAt: now };
+      page = found.page;
+    }
+    const props = Object.values(page.properties || {});
+    const title = (props.find((p) => p.type === 'title')?.title || []).map((t) => t.plain_text).join('') || '(無題)';
+    const status = props.find((p) => p.type === 'status')?.status || props.find((p) => p.type === 'select' && p.select)?.select || null;
+    let group = null;
+    const dsId = page.parent?.data_source_id;
+    if (status && dsId) {
+      const schema = await this.schema(dsId, now);
+      for (const def of Object.values(schema)) {
+        const g = def.type === 'status' ? (def.status?.groups || []).find((x) => (x.option_ids || []).includes(status.id)) : null;
+        if (g) group = g.name;
+      }
+    }
+    const uid = props.find((p) => p.type === 'unique_id')?.unique_id;
+    const labels = props.find((p) => p.type === 'multi_select')?.multi_select || [];
+    const people = props.find((p) => p.type === 'people')?.people || [];
+    return {
+      fetchedAt: now,
+      pageId: page.id,
+      data: {
+        title,
+        state: status?.name || null,
+        stateCategory: status ? notionCategory(group, status.name) : 'open',
+        stateLabel: status?.name || '',
+        kindLabel: uid?.number != null ? `${uid.prefix ? `${uid.prefix}-` : ''}${uid.number}` : 'Page',
+        isPR: false,
+        draft: false,
+        labels: labels.map((l) => ({ name: l.name, color: NOTION_COLORS[l.color] || null })),
+        assignees: people.map((u) => u.name).filter(Boolean),
+        url: page.url,
+        updatedAt: page.last_edited_time,
+      },
+    };
+  }
+
+  commentFormat() {
+    return 'plain';
+  }
+
+  // rich_text の1要素は2000文字までなので分けて送る
+  async comment(r, body) {
+    if (!this.token()) throw new Error('Notion へのコメントには NOTION_TOKEN(インテグレーションのシークレット)が必要です');
+    let pageId = r.pageId ? notionUuid(r.pageId) : this.cache[this.itemKey(r)]?.pageId;
+    if (!pageId) {
+      const found = await this.findByUniqueId(r.id);
+      pageId = found.page?.id;
+    }
+    if (!pageId) throw new Error('Notion のページが見つかりません');
+    const chunks = [];
+    for (let i = 0; i < body.length; i += 2000) chunks.push({ type: 'text', text: { content: body.slice(i, i + 2000) } });
+    const res = await this.api('POST', 'comments', { parent: { page_id: pageId }, rich_text: chunks });
+    if (!res.ok) throw new Error(`Notion API ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`);
+    this.invalidate(r);
+    return { url: this.cache[this.itemKey(r)]?.data?.url || null };
+  }
+}

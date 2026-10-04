@@ -231,6 +231,6 @@ test('ストア経由: 設定に従って Linear と Jira の課題を取得し�
   assert.deepEqual(await res.json(), { url: 'https://linear.app/c/1' });
   const cfgRes = await (await fetch(`${base}/api/config`)).json();
   assert.deepEqual(cfgRes.trackers.map((x) => [x.name, x.configured, x.authenticated]), [
-    ['github', true, false], ['gitlab', true, false], ['linear', true, true], ['jira', true, true], ['backlog', false, false],
+    ['github', true, false], ['gitlab', true, false], ['linear', true, true], ['jira', true, true], ['backlog', false, false], ['notion', false, false],
   ]);
 });

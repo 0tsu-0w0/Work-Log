@@ -22,6 +22,8 @@ const JIRA_URL_RE = /(https?:\/\/[\w.-]+(?::\d+)?(?:\/[\w.-]+)*?)\/browse\/([A-Z
 const BACKLOG_URL_RE = /https?:\/\/([\w-]+\.backlog(?:tool)?\.(?:jp|com))\/view\/([A-Z][A-Z0-9_]{1,9}-\d+)/g;
 // GitLab はグループを入れ子にできるので、"/-/" の手前までをプロジェクトのパスとみなす
 const GITLAB_URL_RE = /https?:\/\/([\w.-]+(?::\d+)?)\/((?:[\w.-]+\/)+[\w.-]+)\/-\/(issues|merge_requests)\/(\d+)/g;
+// Notion のページURL。末尾(または ?p=)の32桁の16進数がページID。その前の "Fix-login-" はタイトルの一部
+const NOTION_URL_RE = /https?:\/\/(?:www\.)?(?:notion\.so|[\w-]+\.notion\.site)\/[^\s)>\]"']*/gi;
 const MR_REF_RE = /(?<![\w&/!])(?:([\w.-]+(?:\/[\w.-]+)+))?!(\d{1,6})(?![\w])/g;
 
 export function normalizeConfig(cfg = {}) {
@@ -52,6 +54,10 @@ export function refsFromText(text, source, cfg, map = new Map()) {
   const body = stripCode(text);
   // URL を先に拾い、同じIDのリンク先として使う
   for (const m of body.matchAll(LINEAR_URL_RE)) addRef(map, { id: m[1], kind: 'key', url: m[0].replace(/[.,]+$/, '') }, source);
+  for (const m of body.matchAll(NOTION_URL_RE)) {
+    const ref = notionRefOf(m[0].replace(/[.,]+$/, ''));
+    if (ref) addRef(map, ref, source);
+  }
   for (const m of body.matchAll(BACKLOG_URL_RE)) addRef(map, { id: m[2], kind: 'key', url: `https://${m[1]}/view/${m[2]}` }, source);
   for (const m of body.matchAll(JIRA_URL_RE)) if (!/linear\.app|backlog/.test(m[1])) addRef(map, { id: m[2], kind: 'key', url: `${m[1]}/browse/${m[2]}` }, source);
   if (cfg.github) {
@@ -100,6 +106,21 @@ export function extractTaskRefs(session, cfg = normalizeConfig()) {
   return [...map.values()];
 }
 
+export function notionRefOf(url) {
+  let u;
+  try {
+    u = new URL(url);
+  } catch {
+    return null;
+  }
+  const last = u.pathname.split('/').filter(Boolean).pop() || '';
+  const hex = (u.searchParams.get('p') || '').match(/^[0-9a-f]{32}$/i)?.[0] || last.match(/([0-9a-f]{32})$/i)?.[1];
+  if (!hex) return null;
+  const pageId = hex.toLowerCase();
+  const slug = u.searchParams.get('p') ? '' : decodeURIComponent(last.slice(0, -32)).replace(/-+$/, '').replace(/-/g, ' ').trim();
+  return { id: `notion:${pageId}`, kind: 'notion', pageId, url: u.origin + u.pathname + (u.searchParams.get('p') ? `?p=${pageId}` : ''), title: slug || null };
+}
+
 // リポジトリの番号("#123" / "!123")はセッションのリポジトリ(repoInfo: { host, path })のものとして扱い、
 // どのサービスの課題か(provider)とリンク先を決める。GitLab 以外の "!123" は意味が無いので null を返す。
 // trackers を渡すと、キー形式(ABC-123)の振り分けと、GitLab のホストの判定にそれを使う
@@ -118,6 +139,11 @@ export function resolveRef(ref, { repo, repoInfo, cfg, trackers } = {}) {
       if (!r.url && gitlabHost) r.url = `https://${r.host}/${r.repo}/-/${r.mr ? 'merge_requests' : 'issues'}/${r.number}`;
     }
     r.label = `${r.repo ? r.repo.split('/').pop() : ''}${r.mr ? '!' : '#'}${r.number}`;
+    return r;
+  }
+  if (r.kind === 'notion') {
+    r.provider = 'notion';
+    r.label = r.title ? (r.title.length > 30 ? `${r.title.slice(0, 30)}…` : r.title) : 'Notion ページ';
     return r;
   }
   if (r.kind === 'key') {

@@ -362,7 +362,7 @@ export class Store {
     return session.tasks.map((t) => resolveRef(t, { repoInfo, cfg: this.taskCfg, trackers: this.trackers })).filter(Boolean);
   }
 
-  // 課題(GitHub / GitLab / Linear / Jira / Backlog)のタイトル・状態・ラベルなどを付ける(取れなければ付けない)
+  // 課題(GitHub / GitLab / Linear / Jira / Backlog / Notion)のタイトル・状態・ラベルなどを付ける(取れなければ付けない)
   async enrichTasks(tasks, opts = {}) {
     return this.trackers.enrich(tasks, opts);
   }
@@ -378,7 +378,7 @@ export class Store {
     const t = (await this.taskSummaries({})).find((x) => x.id === taskId);
     if (!t) throw new Error(`タスクが見つかりません: ${taskId}`);
     const provider = t.provider && this.trackers.get(t.provider);
-    if (!provider || !provider.valid(t)) throw new Error('連携しているサービス(GitHub / GitLab / Linear / Jira / Backlog)の課題に解決できたタスクだけにコメントできます');
+    if (!provider || !provider.valid(t)) throw new Error('連携しているサービス(GitHub / GitLab / Linear / Jira / Backlog / Notion)の課題に解決できたタスクだけにコメントできます');
     const sessions = [...t.sessions].reverse().map((s) => ({ ...s, hashes: (this.getRaw(s.id)?.commitList || []).map((c) => c.hash) }));
     const body = mask(buildWorkLog({ ...t, sessions }, { format: provider.commentFormat(), timeZone }));
     return {
@@ -388,7 +388,7 @@ export class Store {
       authenticated: await provider.authenticated(),
       body,
       hash: createHash('sha256').update(`${provider.name}\n${body}`).digest('hex').slice(0, 16),
-      ref: { id: t.id, repo: t.repo, number: t.number, mr: t.mr },
+      ref: { id: t.id, repo: t.repo, number: t.number, mr: t.mr, pageId: t.pageId },
     };
   }
 
@@ -404,7 +404,7 @@ export class Store {
     const byId = new Map();
     for (const s of sessions) {
       for (const t of await this.resolvedTasks(s)) {
-        const cur = byId.get(t.id) || { id: t.id, label: t.label, kind: t.kind, provider: t.provider || null, url: t.url || null, repo: t.repo || null, host: t.host || null, number: t.number ?? null, mr: Boolean(t.mr), sources: [], projects: [], sessions: [], activeMs: 0, usd: 0, commits: 0 };
+        const cur = byId.get(t.id) || { id: t.id, label: t.label, kind: t.kind, provider: t.provider || null, url: t.url || null, repo: t.repo || null, host: t.host || null, number: t.number ?? null, mr: Boolean(t.mr), pageId: t.pageId || null, sources: [], projects: [], sessions: [], activeMs: 0, usd: 0, commits: 0 };
         if (!cur.url && t.url) cur.url = t.url;
         for (const src of t.sources || []) if (!cur.sources.includes(src)) cur.sources.push(src);
         if (!cur.projects.includes(s.project)) cur.projects.push(s.project);

@@ -1,9 +1,9 @@
 // 課題管理サービスの一覧と、タスクIDの振り分け。
 // 振り分けの順: ログ中のURLのホスト → 設定(config.json の tasks.<サービス>.keys)→ 設定済みのサービスが1つだけならそれ
 import { GitHubIssues } from '../github.js';
-import { GitLabIssues, LinearIssues, JiraIssues, BacklogIssues } from './providers.js';
+import { GitLabIssues, LinearIssues, JiraIssues, BacklogIssues, NotionPages } from './providers.js';
 
-const KEY_PROVIDERS = ['linear', 'jira', 'backlog'];
+const KEY_PROVIDERS = ['linear', 'jira', 'backlog', 'notion'];
 
 export class Trackers {
   constructor({ cacheDir, env = process.env, fetchImpl = fetch, github = null, config = {} } = {}) {
@@ -17,7 +17,7 @@ export class Trackers {
   // config.json の tasks 部分。接続先(Jira の URL・Backlog のスペース・GitLab の URL)とキーのプレフィックス
   setConfig(tasksCfg = {}) {
     const c = (name) => (tasksCfg[name] && typeof tasksCfg[name] === 'object' ? tasksCfg[name] : {});
-    this.cfg = { linear: c('linear'), jira: c('jira'), backlog: c('backlog'), gitlab: c('gitlab') };
+    this.cfg = { linear: c('linear'), jira: c('jira'), backlog: c('backlog'), gitlab: c('gitlab'), notion: c('notion') };
     const opts = { cacheDir: this.cacheDir, env: this.env, fetchImpl: this.fetchImpl };
     this.providers = {
       github: this.github,
@@ -25,6 +25,7 @@ export class Trackers {
       linear: new LinearIssues(opts),
       jira: new JiraIssues({ ...opts, baseUrl: this.cfg.jira.baseUrl }),
       backlog: new BacklogIssues({ ...opts, space: this.cfg.backlog.space }),
+      notion: new NotionPages({ ...opts, databaseId: this.cfg.notion.databaseId, dataSourceId: this.cfg.notion.dataSourceId, idProperty: this.cfg.notion.idProperty }),
     };
     this.keysOf = Object.fromEntries(KEY_PROVIDERS.map((n) => [n, (this.cfg[n].keys || []).map((k) => String(k).toUpperCase())]));
   }
@@ -43,6 +44,7 @@ export class Trackers {
     if (ref.url) {
       const host = safeHost(ref.url);
       if (host === 'linear.app') return 'linear';
+      if (host === 'notion.so' || host === 'www.notion.so' || host.endsWith('.notion.site')) return 'notion';
       if (/\.backlog(tool)?\.(jp|com)$/.test(host)) return 'backlog';
       if (/\/browse\//.test(ref.url) && (host.endsWith('.atlassian.net') || host === safeHost(this.providers.jira.baseUrl || ''))) return 'jira';
     }
