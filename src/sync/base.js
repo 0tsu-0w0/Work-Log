@@ -91,7 +91,7 @@ export class SyncClient {
     }
     if (!res.ok) {
       const detail = json ? json.error?.message || json.error_description || json.error || json.message || '' : text;
-      throw Object.assign(new Error(`${this.label} ${res.status}: ${String(typeof detail === 'string' ? detail : JSON.stringify(detail)).slice(0, 200)}`), { status: res.status });
+      throw Object.assign(new Error(`${this.label} ${res.status}: ${String(typeof detail === 'string' ? detail : JSON.stringify(detail)).slice(0, 200)}`), { status: res.status, body: json });
     }
     return json;
   }

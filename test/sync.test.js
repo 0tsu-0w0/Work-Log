@@ -174,7 +174,7 @@ test('Google カレンダー: リフレッシュトークンでアクセスト�
   const bad = fakeApi();
   bad.failNext(400);
   const g2 = new GoogleCalendar({ env: ENV, fetchImpl: bad.fetchImpl });
-  await assert.rejects(g2.create({ key: 'k', title: 't', description: '', start: '2026-10-01T00:00:00Z', end: '2026-10-01T00:10:00Z' }), /リフレッシュトークン/);
+  await assert.rejects(g2.create({ key: 'k', title: 't', description: '', start: '2026-10-01T00:00:00Z', end: '2026-10-01T00:10:00Z' }), /Google の認証に失敗しました/);
 });
 
 test('Toggl Track: Basic 認証、既定のワークスペース、プロジェクトとタグ', async (t) => {
@@ -322,4 +322,13 @@ test('セッションごと消えたものは最近のものだけ削除する(�
   await store.scan();
   const del = await store.sync('clockify', { from: iso(40 * 1440), to: range.to });
   assert.deepEqual(del.delete.map((x) => x.key).sort(), ['s1-0', 's1-1']);
+});
+
+test('Google の認証エラーは原因ごとに伝える(応答は実際の Google のもの)', async () => {
+  const env = { GOOGLE_CLIENT_ID: 'x', GOOGLE_CLIENT_SECRET: 'y', GOOGLE_REFRESH_TOKEN: 'z', GOOGLE_CALENDAR_ID: 'c' };
+  const with_ = (status, body) => new GoogleCalendar({ env, fetchImpl: async () => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } }) });
+  const e = { key: 'k', title: 't', description: '', start: '2026-10-04T00:00:00Z', end: '2026-10-04T00:10:00Z' };
+  // 2026-10-04 に oauth2.googleapis.com/token へ偽のクライアントで送ったときの実際の応答
+  await assert.rejects(with_(401, { error: 'invalid_client', error_description: 'The OAuth client was not found.' }).create(e), /クライアント ID かクライアントシークレットが違います.*The OAuth client was not found/);
+  await assert.rejects(with_(400, { error: 'invalid_grant', error_description: 'Token has been expired or revoked.' }).create(e), /リフレッシュトークンが無効か期限切れです/);
 });

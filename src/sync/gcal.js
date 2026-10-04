@@ -51,7 +51,10 @@ export class GoogleCalendar extends SyncClient {
     try {
       j = await this.request('POST', this.tokenUrl, { form: { client_id: c.id, client_secret: c.secret, refresh_token: c.refresh, grant_type: 'refresh_token' } });
     } catch (err) {
-      if (err.status === 400 || err.status === 401) throw Object.assign(new Error(`Google の認証に失敗しました(リフレッシュトークンが無効か期限切れです): ${err.message}`), { status: err.status });
+      // OAuth のエラーコード(RFC 6749 5.2)で原因を分ける。実際の Google は、存在しないクライアントに 401 invalid_client を返す
+      const code = typeof err.body?.error === 'string' ? err.body.error : null;
+      const why = code === 'invalid_client' ? 'クライアント ID かクライアントシークレットが違います' : code === 'invalid_grant' ? 'リフレッシュトークンが無効か期限切れです' : '認証情報を確かめてください';
+      if (err.status === 400 || err.status === 401) throw Object.assign(new Error(`Google の認証に失敗しました(${why}): ${err.message}`), { status: err.status });
       throw err;
     }
     if (!j?.access_token) throw new Error('Google の認証に失敗しました(アクセストークンが返りませんでした)');
