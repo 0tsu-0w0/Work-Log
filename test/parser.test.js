@@ -101,3 +101,10 @@ test('-q でハッシュが出ないコミットは成功時刻を記録する',
   assert.deepEqual(s.quietCommits, ['2026-09-28T01:00:06Z']);
   assert.deepEqual(s.commitList, []);
 });
+
+test('タイトルは行頭の見出し記号だけを落とす', () => {
+  const mk = (content) => parseSessionText(JSON.stringify({ type: 'user', sessionId: 's', timestamp: '2026-10-04T00:00:00Z', message: { role: 'user', content } }), { file: '/x/s.jsonl' }).title;
+  assert.equal(mk('acme/api#120 を調べて'), 'acme/api#120 を調べて');
+  assert.equal(mk('## **目的** を整理'), '目的 を整理');
+  assert.equal(mk('> 引用から'), '引用から');
+});

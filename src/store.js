@@ -10,11 +10,14 @@ import { HookLog, deriveStatus } from './live.js';
 import { sessionGit } from './git.js';
 import { costOf, modelFamily, sessionCost, setPricingOverrides } from './pricing.js';
 import { parseCodexFile } from './codex.js';
+import { extractTaskRefs, normalizeConfig, refsFromText, resolveRef, githubRepoOf } from './tasks.js';
+import { remoteWebBase, webBaseFromRemote } from './git.js';
+import { filterSessions } from './filter.js';
 
 // Git の情報は外部(手作業のコミットなど)でも変わるので、短時間だけ使い回す
 const GIT_CACHE_MS = 60 * 1000;
 
-const CACHE_VERSION = 4; // 解析結果の形が変わったら上げる(古いキャッシュを捨てて再解析させる)
+const CACHE_VERSION = 5; // 解析結果の形が変わったら上げる(古いキャッシュを捨てて再解析させる)
 
 export { defaultPaths };
 
@@ -51,6 +54,21 @@ export class Store {
     this.loaded = false;
     this.scanning = null;
     this.gitCache = new Map(); // sessionId -> { key, at, promise }
+    this.taskCfg = normalizeConfig();
+    this.links = {}; // sessionId -> { add: [ref], remove: [id] }(画面から手で付け外ししたタスク)
+    this.linksFile = path.join(cacheDir, 'links.json');
+    this.remotes = new Map(); // cwd -> { at, promise }
+  }
+
+  // 設定(任意): ~/.work-log/config.json。今はタスクIDの拾い方とリンク先だけ
+  async loadConfig() {
+    const file = path.join(this.cacheDir, 'config.json');
+    try {
+      this.taskCfg = normalizeConfig(JSON.parse(await readFile(file, 'utf8')));
+    } catch (err) {
+      if (err.code !== 'ENOENT') console.warn(`[work-log] ${file} を読めません: ${err.message}`);
+      this.taskCfg = normalizeConfig();
+    }
   }
 
   // 利用者の単価表(任意)。読めなければ組み込みの単価だけを使う
@@ -92,6 +110,7 @@ export class Store {
     const cache = await readJson(this.cacheFile, null);
     if (cache?.version === CACHE_VERSION) this.files = cache.files || {};
     this.summaries = (await readJson(this.summaryFile, {})) || {};
+    this.links = (await readJson(this.linksFile, {})) || {};
     this.loaded = true;
   }
 
@@ -153,6 +172,7 @@ export class Store {
       return 0;
     });
     await this.loadPricing();
+    await this.loadConfig();
     const found = [...(await this.listLogFiles()), ...(await this.listCodexFiles())];
     const seen = new Set();
     let changed = 0;
@@ -270,6 +290,7 @@ export class Store {
       },
       status: deriveStatus(hook, session.end, now),
       hook: hook && { startedAt: hook.startedAt, source: hook.source, endedAt: hook.endedAt, endReason: hook.endReason, lastEvent: hook.lastEvent, lastEventAt: hook.lastEventAt },
+      tasks: this.taskRefsOf(session),
       displayTitle: sum.title || session.title,
       summary: sum.summary,
       summarySource: sum.source,
@@ -296,6 +317,80 @@ export class Store {
     const promise = sessionGit(session, { now }).catch((err) => ({ available: false, reason: 'error', error: err.message }));
     this.gitCache.set(id, { key, at: now, promise });
     return promise;
+  }
+
+  // 自動で見つけたタスク + 手で付けたタスク - 手で外したタスク(リポジトリ未解決の状態)
+  taskRefsOf(session) {
+    const link = this.links[session.id] || {};
+    const removed = new Set(link.remove || []);
+    const map = new Map();
+    for (const r of extractTaskRefs(session, this.taskCfg)) if (!removed.has(r.id)) map.set(r.id, r);
+    for (const r of link.add || []) map.set(r.id, { ...r, sources: ['manual'] });
+    return [...map.values()];
+  }
+
+  remoteFor(cwd, now = Date.now()) {
+    const hit = this.remotes.get(cwd);
+    if (hit && now - hit.at < 10 * 60 * 1000) return hit.promise;
+    const promise = remoteWebBase(cwd);
+    this.remotes.set(cwd, { at: now, promise });
+    return promise;
+  }
+
+  // "#123" をセッションのリポジトリの issue に解決し、リンク先URLを付ける
+  async resolvedTasks(session) {
+    if (!session.tasks.length) return [];
+    let repo = githubRepoOf(webBaseFromRemote(session.repoUrl));
+    if (!repo && session.tasks.some((t) => t.kind === 'github' && !t.repo)) repo = githubRepoOf(await this.remoteFor(session.cwd));
+    return session.tasks.map((t) => resolveRef(t, { repo, cfg: this.taskCfg }));
+  }
+
+  // 期間内に動いたセッションをタスクごとにまとめる(時間・コスト・コミットはセッション全体の値)
+  async tasks(params = {}) {
+    const sessions = filterSessions(this.sessions(), params);
+    const byId = new Map();
+    for (const s of sessions) {
+      for (const t of await this.resolvedTasks(s)) {
+        const cur = byId.get(t.id) || { id: t.id, label: t.label, kind: t.kind, url: t.url || null, repo: t.repo || null, sources: [], projects: [], sessions: [], activeMs: 0, usd: 0, commits: 0 };
+        if (!cur.url && t.url) cur.url = t.url;
+        for (const src of t.sources || []) if (!cur.sources.includes(src)) cur.sources.push(src);
+        if (!cur.projects.includes(s.project)) cur.projects.push(s.project);
+        cur.sessions.push({ id: s.id, title: s.displayTitle, project: s.project, tool: s.tool, start: s.start, end: s.end, activeMs: s.activeMs, usd: s.cost.usd, commits: s.commits });
+        cur.activeMs += s.activeMs;
+        cur.usd += s.cost.usd;
+        cur.commits += s.commits;
+        byId.set(t.id, cur);
+      }
+    }
+    const list = [...byId.values()].map((t) => ({
+      ...t,
+      first: t.sessions.reduce((m, x) => (x.start < m ? x.start : m), t.sessions[0].start),
+      last: t.sessions.reduce((m, x) => (x.end > m ? x.end : m), t.sessions[0].end),
+      sessions: t.sessions.sort((a, b) => Date.parse(b.start) - Date.parse(a.start)),
+    }));
+    return list.sort((a, b) => Date.parse(b.last) - Date.parse(a.last));
+  }
+
+  // 画面からの付け外し。入力はID・URL・"#123" のいずれでもよい
+  async updateLinks(id, { add = [], remove = [] } = {}) {
+    const raw = this.getRaw(id);
+    if (!raw) throw new Error(`セッションが見つかりません: ${id}`);
+    const link = this.links[id] || { add: [], remove: [] };
+    for (const input of add) {
+      const refs = [...refsFromText(String(input), 'manual', { ...this.taskCfg, keys: null, deny: new Set() }).values()];
+      if (!refs.length) throw new Error(`タスクIDとして読めません: ${input}(例: ABC-123、#45、owner/repo#45、課題のURL)`);
+      for (const r of refs) {
+        link.add = [...link.add.filter((x) => x.id !== r.id), { id: r.id, kind: r.kind, repo: r.repo, number: r.number, url: r.url }];
+        link.remove = link.remove.filter((x) => x !== r.id);
+      }
+    }
+    for (const rid of remove) {
+      link.add = link.add.filter((x) => x.id !== rid);
+      if (!link.remove.includes(rid)) link.remove.push(rid);
+    }
+    this.links[id] = link;
+    await writeJsonAtomic(this.linksFile, this.links);
+    return this.view(raw);
   }
 
   // 同じ内容のセッションは再要約しない(force 指定時を除く)

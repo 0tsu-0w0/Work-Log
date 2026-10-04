@@ -5,6 +5,9 @@ import { rmSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mask } from './mask.js';
+import { filterSessions } from './filter.js';
+
+export { filterSessions };
 import { llmAvailable, DEFAULT_MODEL } from './summarizer.js';
 import { SERVER_FILE } from './hook.js';
 import { PRICING_AS_OF, PRICING_SOURCE } from './pricing.js';
@@ -13,7 +16,7 @@ import { status as hooksStatus, settingsPath } from './install.js';
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
 const LIST_FIELDS = [
-  'id', 'tool', 'project', 'cwd', 'gitBranch', 'displayTitle', 'start', 'end', 'segments', 'activeMs', 'status', 'hook',
+  'id', 'tool', 'project', 'cwd', 'tasks', 'gitBranch', 'displayTitle', 'start', 'end', 'segments', 'activeMs', 'status', 'hook',
   'messageCount', 'commits', 'workType', 'components', 'summarySource', 'cost',
 ];
 
@@ -24,23 +27,13 @@ function maskDeep(v) {
   return v;
 }
 
-export function filterSessions(sessions, { from, to, project, tag, tool, q } = {}) {
-  const fromMs = from ? Date.parse(from) : -Infinity;
-  const toMs = to ? Date.parse(to) : Infinity;
-  const needle = q?.trim().toLowerCase();
-  return sessions.filter((s) => {
-    if (Date.parse(s.end) < fromMs || Date.parse(s.start) >= toMs) return false;
-    if (project && s.project !== project) return false;
-    if (tool && (s.tool || 'claude') !== tool) return false;
-    if (tag && s.workType !== tag && !s.components.includes(tag)) return false;
-    if (needle) {
-      const commits = (s.commitList || []).flatMap((c) => [c.hash, c.subject]);
-      const hay = [s.displayTitle, s.title, s.summary, s.project, s.gitBranch, ...s.prompts, ...s.changedFiles, ...s.components, ...commits]
-        .filter(Boolean).join('\n').toLowerCase();
-      if (!hay.includes(needle)) return false;
-    }
-    return true;
-  });
+async function readBody(req, limit = 64 * 1024) {
+  let data = '';
+  for await (const chunk of req) {
+    data += chunk;
+    if (data.length > limit) throw new Error('too large');
+  }
+  return data;
 }
 
 function pick(obj, keys) {
@@ -79,6 +72,25 @@ export function createServer(store, { env = process.env } = {}) {
       const tools = [...new Set(all.map((s) => s.tool || 'claude'))].sort();
       return send(res, 200, out({ sessions: list, projects, tags, tools }));
     }
+    if (req.method === 'GET' && parts[1] === 'tasks') {
+      return send(res, 200, out({ tasks: await store.tasks(Object.fromEntries(url.searchParams)) }));
+    }
+    // タスクの付け外し: { "add": ["ABC-123", "#45", "<課題のURL>"], "remove": ["ABC-9"] }
+    if (req.method === 'POST' && parts[1] === 'sessions' && parts[3] === 'tasks') {
+      let body;
+      try {
+        body = JSON.parse((await readBody(req)) || '{}');
+      } catch {
+        return send(res, 400, { error: 'JSON を送ってください' });
+      }
+      try {
+        const v = await store.updateLinks(parts[2], { add: [].concat(body.add || []), remove: [].concat(body.remove || []) });
+        broadcast('update');
+        return send(res, 200, out({ ...v, tasks: await store.resolvedTasks(v) }));
+      } catch (err) {
+        return send(res, 400, { error: err.message });
+      }
+    }
     if (req.method === 'GET' && parts[1] === 'costs') {
       const p = Object.fromEntries(url.searchParams);
       return send(res, 200, out({ ...store.costs(p), pricing: { asOf: PRICING_AS_OF, source: PRICING_SOURCE } }));
@@ -86,7 +98,8 @@ export function createServer(store, { env = process.env } = {}) {
     if (req.method === 'GET' && parts[1] === 'sessions' && parts.length === 3) {
       const s = store.sessions().find((x) => x.id === parts[2]);
       if (!s) return send(res, 404, { error: 'not found' });
-      return send(res, 200, out({ ...s, git: await store.gitFor(s.id) }));
+      const [git, tasks] = await Promise.all([store.gitFor(s.id), store.resolvedTasks(s)]);
+      return send(res, 200, out({ ...s, git, tasks }));
     }
     if (req.method === 'POST' && parts[1] === 'sessions' && parts[3] === 'summarize') {
       if (!llmAvailable(env)) return send(res, 400, { error: 'ANTHROPIC_API_KEY が設定されていないため、LLM要約は使えません' });
@@ -134,6 +147,13 @@ export function createServer(store, { env = process.env } = {}) {
 
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost');
+    // DNS リバインディング対策: Host が自分(127.0.0.1 / localhost)のときだけ応じる
+    const host = (req.headers.host || '').replace(/:\d+$/, '');
+    if (!['127.0.0.1', 'localhost', '[::1]'].includes(host)) return send(res, 403, { error: 'forbidden host' });
+    // 他のサイトのページからの書き込み(CSRF)を断る。フックからの通知は Origin を付けないので通る
+    if (req.method !== 'GET' && req.headers.origin && req.headers.origin !== `http://${req.headers.host}`) {
+      return send(res, 403, { error: 'forbidden origin' });
+    }
     const p = url.pathname.startsWith('/api/') ? handleApi(req, res, url) : handleStatic(res, url);
     p.catch((err) => {
       console.error(err);

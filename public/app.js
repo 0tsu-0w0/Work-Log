@@ -1,4 +1,5 @@
 import { renderCosts } from './costs.js';
+import { renderTasks, taskLink } from './tasks.js';
 
 const $ = (id) => document.getElementById(id);
 const HOUR_PX = 48;
@@ -16,7 +17,7 @@ const state = {
   tool: '',
   q: '',
   selectedId: null,
-  view: 'calendar', // calendar | cost
+  view: 'calendar', // calendar | cost | tasks
   costRange: 'week', // week | month
   monthStart: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
   sessions: [],
@@ -262,6 +263,9 @@ async function showDetail(id, { quiet = false } = {}) {
     </div>
     <div class="summary" id="summary">${esc(s.summary)}</div>
     ${llm ? '' : '<p class="small">ANTHROPIC_API_KEY を設定して起動すると、LLMで要約できます。</p>'}
+    <div class="section-title">タスク</div>
+    <div class="task-chips">${s.tasks.map((t) => `<span class="chip">${taskLink(t)}<button class="rm" data-id="${esc(t.id)}" title="このセッションから外す" aria-label="${esc(t.label)} を外す">×</button></span>`).join('') || '<span class="small">見つかっていません</span>'}</div>
+    <form class="task-add" id="task-add"><input name="task" placeholder="ABC-123、#45、課題のURL" aria-label="紐付けるタスク"><button>紐付け</button></form>
     ${renderGit(s)}
     ${s.changedFiles.length ? `<div class="section-title">変更ファイル</div><ul class="files">${s.changedFiles.map((f) => `<li>${esc(f)}</li>`).join('')}</ul>` : ''}
     ${s.firstPrompt ? `<div class="section-title">最初の依頼</div><div class="prompt">${esc(s.firstPrompt)}</div>` : ''}
@@ -273,6 +277,20 @@ async function showDetail(id, { quiet = false } = {}) {
     ${s.hook ? `<p class="meta">hooks: ${s.hook.source ? `開始 ${esc(SOURCE_LABEL[s.hook.source] || s.hook.source)} · ` : ''}${s.hook.endedAt ? `終了 ${fmtTime(new Date(s.hook.endedAt))}(${esc(END_LABEL[s.hook.endReason] || s.hook.endReason || '-')}) · ` : ''}最終イベント ${esc(s.hook.lastEvent)} ${fmtTime(new Date(s.hook.lastEventAt))}</p>` : ''}
     <p class="meta small">${esc(s.cwd || '')}<br>${esc(s.id)}</p>`;
 
+  const postTasks = async (body) => {
+    try {
+      await api(`/api/sessions/${encodeURIComponent(id)}/tasks`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+      await refresh();
+    } catch (err) {
+      $('task-add').insertAdjacentHTML('afterend', `<p class="error">${esc(err.message)}</p>`);
+    }
+  };
+  $('task-add').onsubmit = (e) => {
+    e.preventDefault();
+    const v = e.target.task.value.trim();
+    if (v) postTasks({ add: [v] });
+  };
+  document.querySelectorAll('#detail .chip .rm').forEach((b) => (b.onclick = () => postTasks({ remove: [b.dataset.id] })));
   $('close').onclick = () => {
     state.selectedId = null;
     document.querySelectorAll('.block.selected').forEach((b) => b.classList.remove('selected'));
@@ -383,23 +401,36 @@ async function loadCosts() {
   redrawCosts = renderCosts($('costs'), data, { days, onSession: (id) => showDetail(id) });
 }
 
+async function loadTasks() {
+  const { from, to, label } = costPeriod();
+  const params = new URLSearchParams({ from: from.toISOString(), to: to.toISOString() });
+  if (state.project) params.set('project', state.project);
+  if (state.tool) params.set('tool', state.tool);
+  const { tasks } = await api(`/api/tasks?${params}`);
+  if (label) $('range').textContent = label;
+  renderTasks($('tasks'), tasks, { onSession: (id) => showDetail(id) });
+}
+
 async function refresh() {
   await loadWeek();
   if (state.view === 'cost') await loadCosts();
+  if (state.view === 'tasks') await loadTasks();
 }
 
 function setView(view) {
   state.view = view;
   $('calendar').hidden = view !== 'calendar';
   $('costs').hidden = view !== 'cost';
-  $('cost-range').hidden = view !== 'cost';
+  $('tasks').hidden = view !== 'tasks';
+  $('cost-range').hidden = view === 'calendar';
   $('tab-calendar').setAttribute('aria-selected', String(view === 'calendar'));
   $('tab-cost').setAttribute('aria-selected', String(view === 'cost'));
+  $('tab-tasks').setAttribute('aria-selected', String(view === 'tasks'));
   refresh();
 }
 
 function shiftPeriod(dir) {
-  if (state.view === 'cost' && state.costRange === 'month') {
+  if (state.view !== 'calendar' && state.costRange === 'month') {
     state.monthStart = new Date(state.monthStart.getFullYear(), state.monthStart.getMonth() + dir, 1);
     state.weekStart = startOfWeek(state.monthStart);
   } else {
@@ -411,6 +442,7 @@ function shiftPeriod(dir) {
 
 $('tab-calendar').onclick = () => setView('calendar');
 $('tab-cost').onclick = () => setView('cost');
+$('tab-tasks').onclick = () => setView('tasks');
 document.querySelectorAll('#cost-range button').forEach((b) => {
   b.onclick = () => {
     state.costRange = b.dataset.range;

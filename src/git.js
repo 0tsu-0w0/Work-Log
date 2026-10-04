@@ -70,6 +70,16 @@ function inWindow(t, segments) {
 }
 
 // session.commitList(Claudeが実行して成功したコミット)と、同じ時間帯に同じ作者が作ったコミットを集める
+// 作業ディレクトリのリポジトリのWeb上のURL(origin)。リポジトリでなければ null
+export async function remoteWebBase(cwd) {
+  if (!cwd || !path.isAbsolute(cwd)) return null;
+  try {
+    return webBaseFromRemote((await git(cwd, ['remote', 'get-url', 'origin'])).trim());
+  } catch {
+    return null;
+  }
+}
+
 export async function sessionGit(session, { now = Date.now() } = {}) {
   const cwd = session.cwd;
   if (!cwd || !path.isAbsolute(cwd) || !session.segments?.length) return { available: false, reason: 'no-cwd' };

@@ -247,3 +247,24 @@ del { color: #cf222e; text-decoration: none; }
 .block.codex { background-image: repeating-linear-gradient(45deg, rgba(255,255,255,.35) 0 3px, transparent 3px 7px); }
 .badge.tool { color: var(--muted); }
 .cost-head code { font-size: 11px; }
+
+/* タスク */
+.task-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.chip { display: inline-flex; align-items: center; gap: 2px; border: 1px solid var(--line-strong); border-radius: 999px; padding: 1px 4px 1px 9px; font-size: 12px; }
+.chip a { color: var(--accent); text-decoration: none; }
+.chip .rm { border: 0; background: transparent; padding: 0 4px; color: var(--muted); line-height: 1; }
+.chip .rm:hover { color: var(--text); }
+.task-add { display: flex; gap: 6px; }
+.task-add input { flex: 1; min-width: 0; }
+.task-table { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; margin-top: 8px; }
+.task-table th, .task-table td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+.task-table th { color: var(--muted); font-weight: 500; white-space: nowrap; }
+.task-table .n { text-align: right; white-space: nowrap; }
+.task-table a { color: var(--accent); text-decoration: none; font-weight: 600; }
+.task-table .toggle { border: 0; background: transparent; padding: 0 4px 0 0; color: var(--muted); }
+.task-table .share { display: inline-block; width: 40px; height: 6px; margin-right: 6px; border-radius: 3px; background: linear-gradient(90deg, var(--series-1) var(--w), var(--line) var(--w)); vertical-align: 1px; }
+.task-sessions td { background: var(--bg); }
+.task-sessions ul { margin: 0; padding-left: 18px; }
+.task-sessions li { padding: 3px 0; cursor: pointer; }
+.task-sessions li:hover .t { text-decoration: underline; }
+.task-sessions li .small { margin-left: 8px; }

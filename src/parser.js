@@ -267,7 +267,8 @@ function addUsage(map, timestamp, model, u) {
 function firstLine(text) {
   if (!text) return null;
   const line = text.split('\n').find((l) => l.trim()) || '';
-  const clean = line.replace(/[*#`>]/g, '').trim();
+  // 見出しや引用の記号(行頭の # や >)と、強調・コードの記号だけを落とす。"acme/api#12" の # は残す
+  const clean = line.replace(/^\s*(?:#{1,6}\s+|>\s*)/, '').replace(/[*`]/g, '').trim();
   return clean.length > 60 ? clean.slice(0, 60) + '…' : clean;
 }
 

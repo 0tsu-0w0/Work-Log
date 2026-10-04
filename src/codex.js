@@ -73,6 +73,7 @@ export function parseCodexText(text, { file = '' } = {}) {
     id: path.basename(file).replace(/\.jsonl(\.zst)?$/, '').replace(/^rollout-[\dT:-]+-/, ''),
     cwd: null,
     gitBranch: null,
+    repoUrl: null,
     model: null,
     prompts: [],
     responseUserPrompts: [],
@@ -134,6 +135,7 @@ export function parseCodexText(text, { file = '' } = {}) {
       if (payload.id) s.id = String(payload.id);
       if (payload.cwd) s.cwd = String(payload.cwd);
       if (payload.git?.branch) s.gitBranch = payload.git.branch;
+      if (payload.git?.repository_url) s.repoUrl = payload.git.repository_url;
       if (!Number.isNaN(Date.parse(payload.timestamp))) timestamps.push(Date.parse(payload.timestamp));
       continue;
     }
@@ -226,6 +228,7 @@ export function parseCodexText(text, { file = '' } = {}) {
     project: projectNameFrom(cwd, ''),
     cwd,
     gitBranch: s.gitBranch,
+    repoUrl: s.repoUrl || null,
     title: firstLine ? (firstLine.length > 60 ? firstLine.slice(0, 60) + '…' : firstLine) : '(無題のセッション)',
     firstPrompt: prompts[0] ? prompts[0].slice(0, 2000) : null,
     prompts: prompts.map((p) => p.slice(0, 1000)),
