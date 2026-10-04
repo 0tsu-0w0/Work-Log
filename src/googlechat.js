@@ -56,7 +56,9 @@ export class GoogleChat {
     if (res.status === 429) throw new Error(`Google Chat の送信が制限されています(${res.headers.get('retry-after') || '少し'}秒後に再試行してください)`);
     if (!res.ok) {
       const j = await res.json().catch(() => null);
-      throw new Error(`Google Chat Webhook ${res.status}: ${String(j?.error?.message || j?.error?.status || '').slice(0, 200)}`);
+      // 実際の Chat は、URL のスペースや鍵が違う・Webhook が消されたときに 403 PERMISSION_DENIED を返す
+      const hint = res.status === 403 || res.status === 404 ? '(Webhook の URL が違うか、スペースから削除されています)' : '';
+      throw new Error(`Google Chat Webhook ${res.status}${hint}: ${String(j?.error?.message || j?.error?.status || '').slice(0, 200)}`);
     }
     return { url: null };
   }

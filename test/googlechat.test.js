@@ -42,6 +42,8 @@ test('送信: { text } を POST し、エラーと制限を伝える', async () 
   const err = (o) => new GoogleChat({ env: { GOOGLE_CHAT_WEBHOOK_URL: HOOK }, fetchImpl: fakeChat(o).fetchImpl }).post({ text: 'x' });
   await assert.rejects(err({ status: 429, body: {}, headers: { 'retry-after': '2' } }), /2秒後/);
   await assert.rejects(err({ status: 400, body: { error: { code: 400, message: 'Invalid JSON payload', status: 'INVALID_ARGUMENT' } } }), /Google Chat Webhook 400: Invalid JSON payload/);
+  // 2026-10-04 に実在しないスペースへ送ったときの実際の応答
+  await assert.rejects(err({ status: 403, body: { error: { code: 403, message: "Permission denied to perform the requested action on the specified resource, or the resource doesn't exist.", status: 'PERMISSION_DENIED' } } }), /403\(Webhook の URL が違うか、スペースから削除されています\): Permission denied/);
   await assert.rejects(new GoogleChat({ env: {} }).post({ text: 'x' }), /GOOGLE_CHAT_WEBHOOK_URL/);
 });
 
