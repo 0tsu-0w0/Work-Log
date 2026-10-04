@@ -1,5 +1,8 @@
 // タスクビュー: 期間内に動いたセッションをタスクIDごとにまとめて表示する
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+// ツールの表示名(app.js がサーバーの設定から入れる)
+let toolLabels = {};
+export const setToolLabels = (m) => (toolLabels = m || {});
 const SOURCE_LABEL = { prompt: '依頼', branch: 'ブランチ', commit: 'コミット', manual: '手動' };
 
 function dur(ms) {
@@ -81,7 +84,7 @@ export function renderTasks(root, tasks, { onSession, onComment }) {
         </tr>
         <tr class="task-sessions" data-i="${i}" ${expanded.has(t.id) ? '' : 'hidden'}><td colspan="8"><ul>${t.sessions.map((s) => `
           <li data-id="${esc(s.id)}"><span class="t">${esc(s.title)}</span>
-            <span class="small">${s.tool === 'codex' ? 'Codex · ' : ''}${esc(s.project)} · ${day(s.start)} · ${dur(s.activeMs)} · ${s.commits}コミット · ${usd(s.usd)}</span></li>`).join('')}</ul>
+            <span class="small">${s.tool && s.tool !== 'claude' ? `${esc(toolLabels[s.tool] || s.tool)} · ` : ''}${esc(s.project)} · ${day(s.start)} · ${dur(s.activeMs)} · ${s.commits}コミット · ${usd(s.usd)}</span></li>`).join('')}</ul>
           ${t.provider && t.issue ? `<button class="comment-btn" data-id="${esc(t.id)}">${esc(PROVIDER_LABEL[t.provider])} の ${esc(t.label)} に作業記録をコメント…</button>` : ''}
           ${posted.has(t.id) ? `<p class="small">投稿しました: ${posted.get(t.id) ? `<a href="${esc(posted.get(t.id))}" target="_blank" rel="noopener noreferrer">${esc(posted.get(t.id))}</a>` : ''}</p>` : ''}</td></tr>`).join('')}
       </tbody>

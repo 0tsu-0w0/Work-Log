@@ -244,7 +244,7 @@ del { color: #cf222e; text-decoration: none; }
 .top-sessions b { font-variant-numeric: tabular-nums; }
 
 /* Codex のセッションは 45° の斜線で見分けられるようにする(色だけに頼らない) */
-.block.codex { background-image: repeating-linear-gradient(45deg, rgba(255,255,255,.35) 0 3px, transparent 3px 7px); }
+.block.other-tool { background-image: repeating-linear-gradient(45deg, rgba(255,255,255,.35) 0 3px, transparent 3px 7px); }
 .badge.tool { color: var(--muted); }
 .cost-head code { font-size: 11px; }
 

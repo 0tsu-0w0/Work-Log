@@ -3,7 +3,7 @@
 //   work-log                 サーバーを起動 (http://127.0.0.1:4317)
 //   work-log scan            ログを解析してセッション一覧を表示
 //   work-log summarize [ID]  LLMで要約(IDを省略すると未要約のものをすべて)
-//   work-log report [--week] [--date YYYY-MM-DD] [--slack] [--discord] [--teams] [--google-chat]  日報・週報を表示(各オプションで送る)
+//   work-log report [--week] [--date YYYY-MM-DD] [--slack] [--discord] [--teams] [--google-chat] …  日報・週報を表示(送り先のオプションで送る。一覧は destinations.js)
 //   work-log hooks install   Claude Code の hooks に登録(uninstall / status も可)
 //   work-log hook            hooks から呼ばれる受け口(手動では使わない)
 import { defaultPaths } from './paths.js';
@@ -57,7 +57,8 @@ if (cmd === 'hooks') {
 const { Store } = await import('./store.js');
 const { createServer } = await import('./server.js');
 const { llmAvailable } = await import('./summarizer.js');
-const store = new Store(defaultPaths());
+const { defaultSourceDirs } = await import('./sources.js');
+const store = new Store({ ...defaultPaths(), sourceDirs: defaultSourceDirs() });
 const scanResult = await store.scan();
 
 if (cmd === 'scan') {
@@ -85,13 +86,13 @@ if (cmd === 'scan') {
   const { plainFromMrkdwn } = await import('./report.js');
   try {
     const params = { period: args.includes('--week') ? 'week' : 'day', date: flag('date'), tz: flag('tz') || process.env.TZ, waitMs: 8000 };
-    const FLAGS = { slack: '--slack', discord: '--discord', teams: '--teams', googlechat: '--google-chat' };
-    const targets = Object.keys(FLAGS).filter((t) => args.includes(FLAGS[t]));
+    const { DESTINATIONS, DEST_BY_NAME } = await import('./destinations.js');
+    const targets = DESTINATIONS.filter((d) => args.includes(d.flag)).map((d) => d.name);
     console.log(plainFromMrkdwn((await store.report({ ...params, target: 'slack' })).preview));
     for (const t of targets) {
       const r = await store.report({ ...params, target: t });
       const sent = await store.destinations[t].post(r.message);
-      console.log(`${{ slack: 'Slack', discord: 'Discord', teams: 'Teams', googlechat: 'Google Chat' }[t]} に送りました${sent.url ? `: ${sent.url}` : ''}`);
+      console.log(`${DEST_BY_NAME[t].label} に送りました${sent.url ? `: ${sent.url}` : ''}`);
     }
   } catch (err) {
     console.error(err.message);

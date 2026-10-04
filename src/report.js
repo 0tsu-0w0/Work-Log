@@ -1,6 +1,10 @@
 // 日報・週報: 期間内の作業(時間・セッション・コミット・プロジェクト・タスク・コスト)をまとめ、
 // Slack の mrkdwn とターミナル向けのプレーンテキストで書き出す。
 // 時間は期間に入る部分だけを数え、コミットは時刻が期間内のものを数える。
+import { toolLabel } from './sources.js';
+
+// Claude Code 以外のツールのセッションには、ツール名を添える
+const otherTool = (s) => (s.tool && s.tool !== 'claude' ? `(${toolLabel(s.tool)})` : '');
 
 // tz での "YYYY-MM-DD" の 0 時(UTC のミリ秒)。夏時間の切り替えにも対応するため、ずれを2回直す
 export function zonedMidnight(dateStr, timeZone) {
@@ -103,7 +107,6 @@ const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').
 // Slack 用(blocks と、通知などに使われる text)。セクション1つの文字数上限(3000)を超えないよう分ける
 export function toSlack(report, { includeCost = false, maxSessions = 20 } = {}) {
   const { totals, range } = report;
-  const tool = (t) => (t === 'codex' ? 'Codex' : 'Claude Code');
   const time = (iso) => new Intl.DateTimeFormat('ja-JP', { timeZone: range.timeZone, ...(range.period === 'week' ? { month: 'numeric', day: 'numeric' } : {}), hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
   const head = `*Work Log ${title(range)}*`;
   const summary = report.sessions.length
@@ -125,7 +128,7 @@ export function toSlack(report, { includeCost = false, maxSessions = 20 } = {}) 
   }
   if (report.sessions.length) {
     const shown = report.sessions.slice(0, maxSessions);
-    const lines = shown.map((s) => `• ${time(s.start)} ${esc(s.title)} — ${esc(s.project)}・${dur(s.activeMs)}${s.commits ? `・${s.commits}コミット` : ''}${s.tool === 'codex' ? `(${tool(s.tool)})` : ''}`);
+    const lines = shown.map((s) => `• ${time(s.start)} ${esc(s.title)} — ${esc(s.project)}・${dur(s.activeMs)}${s.commits ? `・${s.commits}コミット` : ''}${otherTool(s)}`);
     if (report.sessions.length > shown.length) lines.push(`ほか ${report.sessions.length - shown.length} セッション`);
     let cur = '*セッション*';
     for (const l of lines) {
@@ -149,7 +152,7 @@ export function plainFromMrkdwn(text) {
 // セッション終了の通知(1セッション分)
 export function sessionEndMessage(s, { includeCost = false } = {}) {
   const parts = [esc(s.project), dur(s.activeMs), `${s.commits}コミット`];
-  if (s.tool === 'codex') parts.push('Codex');
+  if (s.tool && s.tool !== 'claude') parts.push(toolLabel(s.tool));
   if (includeCost && s.cost) parts.push(`API 換算 $${s.cost.usd.toFixed(2)}`);
   const tasks = (s.tasks || []).map((t) => (t.url ? `<${t.url.replace(/[<>|]/g, encodeURIComponent)}|${esc(t.label)}>` : esc(t.label)));
   const text = `セッション終了: *${esc(s.displayTitle || s.title)}*\n${parts.join('・')}${tasks.length ? `\nタスク: ${tasks.join(', ')}` : ''}`;
@@ -177,7 +180,7 @@ export function toDiscord(report, { includeCost = false, maxSessions = 20 } = {}
   }
   if (report.sessions.length) {
     const shown = report.sessions.slice(0, maxSessions);
-    const lines = shown.map((s) => `• ${time(s.start)} ${dEsc(s.title)} — ${dEsc(s.project)}・${dur(s.activeMs)}${s.commits ? `・${s.commits}コミット` : ''}${s.tool === 'codex' ? '(Codex)' : ''}`);
+    const lines = shown.map((s) => `• ${time(s.start)} ${dEsc(s.title)} — ${dEsc(s.project)}・${dur(s.activeMs)}${s.commits ? `・${s.commits}コミット` : ''}${otherTool(s)}`);
     if (report.sessions.length > shown.length) lines.push(`ほか ${report.sessions.length - shown.length} セッション`);
     sections.push(['セッション', lines]);
   }
@@ -205,7 +208,7 @@ export function toDiscord(report, { includeCost = false, maxSessions = 20 } = {}
 
 export function sessionEndDiscord(s, { includeCost = false } = {}) {
   const parts = [dEsc(s.project), dur(s.activeMs), `${s.commits}コミット`];
-  if (s.tool === 'codex') parts.push('Codex');
+  if (s.tool && s.tool !== 'claude') parts.push(toolLabel(s.tool));
   if (includeCost && s.cost) parts.push(`API 換算 $${s.cost.usd.toFixed(2)}`);
   const tasks = (s.tasks || []).map((t) => dLink(t.label, t.url));
   const description = `${parts.join('・')}${tasks.length ? `\nタスク: ${tasks.join(', ')}` : ''}`;
@@ -251,7 +254,7 @@ export function toTeams(report, { includeCost = false, maxSessions = 20 } = {}) 
   const sections = [];
   if (report.projects.length) sections.push(['プロジェクト別', report.projects.map((p) => `${tEsc(p.project)}  ${dur(p.activeMs)}(${p.sessions}セッション・${p.commits}コミット)`)]);
   if (report.tasks.length) sections.push(['タスク', report.tasks.map((t) => `${tLink(t.label, t.url)}${t.issue ? ` ${tEsc(t.issue.title)}(${tEsc(t.issue.stateLabel)})` : ''}  ${dur(t.activeMs)}`)]);
-  let lines = report.sessions.map((s) => `${time(s.start)} ${tEsc(s.title)} — ${tEsc(s.project)}・${dur(s.activeMs)}${s.commits ? `・${s.commits}コミット` : ''}${s.tool === 'codex' ? '(Codex)' : ''}`);
+  let lines = report.sessions.map((s) => `${time(s.start)} ${tEsc(s.title)} — ${tEsc(s.project)}・${dur(s.activeMs)}${s.commits ? `・${s.commits}コミット` : ''}${otherTool(s)}`);
   const build = (sessionLines, hidden) => {
     const all = [...sections, ...(sessionLines.length ? [['セッション', hidden ? [...sessionLines, `ほか ${hidden} セッション`] : sessionLines]] : [])];
     const body = [tb(`Work Log ${title(range)}`, { weight: 'Bolder', size: 'Medium' }), tb(summary, { spacing: 'Small' })];
@@ -272,7 +275,7 @@ export function toTeams(report, { includeCost = false, maxSessions = 20 } = {}) 
 
 export function sessionEndTeams(s, { includeCost = false } = {}) {
   const parts = [tEsc(s.project), dur(s.activeMs), `${s.commits}コミット`];
-  if (s.tool === 'codex') parts.push('Codex');
+  if (s.tool && s.tool !== 'claude') parts.push(toolLabel(s.tool));
   if (includeCost && s.cost) parts.push(`API 換算 $${s.cost.usd.toFixed(2)}`);
   const tasks = (s.tasks || []).map((t) => tLink(t.label, t.url));
   const body = [tb(`セッション終了: ${tEsc(s.displayTitle || s.title)}`, { weight: 'Bolder' }), tb(parts.join('・'), { spacing: 'Small' })];
@@ -303,7 +306,7 @@ export function toGoogleChat(report, { includeCost = false, maxSessions = 20 } =
   const head = [`*Work Log ${title(range)}*\n${summary}`];
   if (report.projects.length) head.push(['*プロジェクト別*', ...report.projects.map((p) => `• ${gEsc(p.project)}  ${dur(p.activeMs)}(${p.sessions}セッション・${p.commits}コミット)`)].join('\n'));
   if (report.tasks.length) head.push(['*タスク*', ...report.tasks.map((t) => `• ${gLink(t.label, t.url)}${t.issue ? ` ${gEsc(t.issue.title)}(${gEsc(t.issue.stateLabel)})` : ''}  ${dur(t.activeMs)}`)].join('\n'));
-  const lines = report.sessions.map((s) => `• ${time(s.start)} ${gEsc(s.title)} — ${gEsc(s.project)}・${dur(s.activeMs)}${s.commits ? `・${s.commits}コミット` : ''}${s.tool === 'codex' ? '(Codex)' : ''}`);
+  const lines = report.sessions.map((s) => `• ${time(s.start)} ${gEsc(s.title)} — ${gEsc(s.project)}・${dur(s.activeMs)}${s.commits ? `・${s.commits}コミット` : ''}${otherTool(s)}`);
   const build = (n) => {
     const parts = [...head];
     if (lines.length) parts.push(['*セッション*', ...lines.slice(0, n), ...(lines.length > n ? [`ほか ${lines.length - n} セッション`] : [])].join('\n'));
@@ -318,7 +321,7 @@ export function toGoogleChat(report, { includeCost = false, maxSessions = 20 } =
 
 export function sessionEndGoogleChat(s, { includeCost = false } = {}) {
   const parts = [gEsc(s.project), dur(s.activeMs), `${s.commits}コミット`];
-  if (s.tool === 'codex') parts.push('Codex');
+  if (s.tool && s.tool !== 'claude') parts.push(toolLabel(s.tool));
   if (includeCost && s.cost) parts.push(`API 換算 $${s.cost.usd.toFixed(2)}`);
   const tasks = (s.tasks || []).map((t) => gLink(t.label, t.url));
   return { text: [`*セッション終了: ${gEsc(s.displayTitle || s.title)}*`, parts.join('・'), ...(tasks.length ? [`タスク: ${tasks.join(', ')}`] : [])].join('\n') };

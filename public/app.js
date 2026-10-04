@@ -1,11 +1,12 @@
 import { renderCosts } from './costs.js';
-import { renderTasks, taskLink, issueState, notePosted } from './tasks.js';
+import { renderTasks, taskLink, issueState, notePosted, setToolLabels } from './tasks.js';
 
 const $ = (id) => document.getElementById(id);
 const HOUR_PX = 48;
 const MIN_BLOCK_PX = 14;
 const DAY_NAMES = ['月', '火', '水', '木', '金', '土', '日'];
-const TOOL_LABEL = { claude: 'Claude Code', codex: 'Codex' };
+// ツールの表示名(サーバーの取り込み元の一覧から上書きする)
+let TOOL_LABEL = { claude: 'Claude Code', codex: 'Codex' };
 const STATUS_LABEL = { working: '作業中', waiting: '入力待ち', done: '完了' };
 const SOURCE_LABEL = { startup: '新規起動', resume: '再開', clear: '/clear 後', compact: 'コンパクト後', fork: 'フォーク' };
 const END_LABEL = { clear: '/clear', resume: '別セッションを再開', logout: 'ログアウト', prompt_input_exit: '終了操作', other: 'その他' };
@@ -178,7 +179,7 @@ function layoutLanes(pieces) {
 function blockEl(p) {
   const { s } = p;
   const el = document.createElement('div');
-  el.className = `block ${s.status} ${s.tool === 'codex' ? 'codex' : ''} ${s.id === state.selectedId ? 'selected' : ''}`;
+  el.className = `block ${s.status} ${s.tool && s.tool !== 'claude' ? 'other-tool' : ''} ${s.id === state.selectedId ? 'selected' : ''}`;
   el.dataset.id = s.id;
   el.style.top = `${p.top}px`;
   el.style.height = `${p.height}px`;
@@ -186,7 +187,7 @@ function blockEl(p) {
   el.style.width = `calc(${100 / p.lanes}% - 4px)`;
   el.style.background = projectColor(s.project);
   el.title = `${s.displayTitle}\n${s.project} · ${fmtTime(new Date(p.a))}〜${fmtTime(new Date(p.b))} · ${STATUS_LABEL[s.status]}`;
-  el.innerHTML = `<div class="t">${esc(s.displayTitle)}</div>` + (p.height > 30 ? `<div class="m">${s.tool === 'codex' ? 'Codex · ' : ''}${esc(s.project)} · ${fmtTime(new Date(p.a))}</div>` : '');
+  el.innerHTML = `<div class="t">${esc(s.displayTitle)}</div>` + (p.height > 30 ? `<div class="m">${s.tool && s.tool !== 'claude' ? `${esc(TOOL_LABEL[s.tool] || s.tool)} · ` : ''}${esc(s.project)} · ${fmtTime(new Date(p.a))}</div>` : '');
   el.addEventListener('click', () => showDetail(s.id));
   return el;
 }
@@ -417,11 +418,14 @@ const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 // 画面の自動更新で描き直しても、送った結果の表示は残す
 let slackSent = null;
-const DEST_LABEL = { slack: 'Slack', discord: 'Discord', teams: 'Teams', googlechat: 'Google Chat' };
+
+const destInfo = (name) => (state.config?.destinations || []).find((d) => d.name === name) || {};
+const DEST_LABEL = new Proxy({}, { get: (_, name) => destInfo(name).label || String(name) });
 
 function sendButtons() {
-  const dests = Object.keys(DEST_LABEL).filter((t) => state.config?.[t]?.configured);
-  if (!dests.length) return '<p class="small">SLACK_WEBHOOK_URL・DISCORD_WEBHOOK_URL・TEAMS_WEBHOOK_URL・GOOGLE_CHAT_WEBHOOK_URL を設定すると、日報・週報を送れます。</p>';
+  const all = state.config?.destinations || [];
+  const dests = all.filter((d) => d.configured).map((d) => d.name);
+  if (!dests.length) return `<p class="small">${esc(all.map((d) => d.env).join('・'))} などを設定すると、日報・週報を送れます。</p>`;
   return (
     dests
       .map((t) => `<div class="slack-send"><span class="small">${DEST_LABEL[t]}(${esc(state.config[t].destination)})に送る</span>
@@ -448,7 +452,7 @@ async function sendReport(target, period, button) {
   }
   const dlg = $('comment-dialog');
   $('comment-title').textContent = `${DEST_LABEL[target]}(${preview.status.destination})に${period === 'week' ? '週報' : '日報'}を送ります`;
-  $('comment-note').textContent = `次の内容が送られます(${DEST_LABEL[target]} では見出しが太字、タスクがリンクになります)。チャンネルの参加者全員が読めます。${preview.status.includeCost ? 'API 換算コストを含みます。' : ''}`;
+  $('comment-note').textContent = `次の内容が送られます(${DEST_LABEL[target]} では見出しが太字、タスクがリンクになります)。${destInfo(target).note || ''}${preview.status.includeCost ? 'API 換算コストを含みます。' : ''}`;
   $('comment-body').textContent = preview.previewText;
   dlg.showModal();
   dlg.onclose = async () => {
@@ -579,6 +583,8 @@ function renderHooksBadge() {
 
 (async () => {
   state.config = await api('/api/config');
+  TOOL_LABEL = { ...TOOL_LABEL, ...(state.config.toolLabels || {}) };
+  setToolLabels(TOOL_LABEL);
   renderHooksBadge();
   await loadWeek();
   // 8時付近を初期表示位置にする

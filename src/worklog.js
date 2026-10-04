@@ -2,6 +2,8 @@
 //   markdown: GitHub / GitLab / Linear(表)
 //   jira    : Jira の Wiki 記法(REST API v2 の文字列コメント)
 //   plain   : Backlog(プロジェクトの記法が Backlog 記法でも Markdown でも崩れないよう、表を使わない)
+import { toolLabel } from './sources.js';
+
 export function buildWorkLog(t, { format = 'markdown', timeZone } = {}) {
   // 時刻は画面と同じタイムゾーンで書く(不正な指定はサーバーのタイムゾーン)
   let tz;
@@ -15,7 +17,7 @@ export function buildWorkLog(t, { format = 'markdown', timeZone } = {}) {
     const m = Math.round(ms / 60000);
     return m < 60 ? `${m}分` : `${Math.floor(m / 60)}時間${m % 60 ? `${m % 60}分` : ''}`;
   };
-  const tool = (s) => (s.tool === 'codex' ? 'Codex' : 'Claude Code');
+  const tool = (s) => toolLabel(s.tool || 'claude');
   const commits = (s) => `${s.commits}${s.hashes?.length ? ` (${s.hashes.join(' ')})` : ''}`;
   const summary = `${t.sessions.length}セッション・作業 ${dur(t.activeMs)}・${t.commits}コミット(${fmt(t.first)} 〜 ${fmt(t.last)})`;
   const footer = 'ローカルの AI コーディングツールのセッションログから Work Log で作成';

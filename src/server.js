@@ -11,10 +11,8 @@ export { filterSessions };
 import { llmAvailable, DEFAULT_MODEL } from './summarizer.js';
 import { SERVER_FILE } from './hook.js';
 import { PRICING_AS_OF, PRICING_SOURCE } from './pricing.js';
-import { plainFromMrkdwn, plainFromDiscord, plainFromTeams, plainFromGoogleChat } from './report.js';
-
-// 送り先ごとの書式を、画面のプレビュー用のプレーンテキストに戻す
-const PLAIN = { slack: plainFromMrkdwn, discord: plainFromDiscord, teams: plainFromTeams, googlechat: plainFromGoogleChat };
+import { DESTINATIONS, DEST_BY_NAME } from './destinations.js';
+import { SOURCES, TOOL_LABELS } from './sources.js';
 import { status as hooksStatus, settingsPath } from './install.js';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
@@ -58,13 +56,14 @@ export function createServer(store, { env = process.env } = {}) {
         masking: shouldMask,
         projectsDir: store.projectsDir,
         codexDir: store.codexDir,
+        sources: SOURCES.map((s) => ({ name: s.name, label: s.label, dir: store.sourceDirs[s.name] || null })),
+        toolLabels: TOOL_LABELS,
         hooks: { installed: hooks.events, lastEventAt: store.hooks.lastEventAt },
         github: await store.github.status(),
         trackers: await store.trackers.status(),
-        slack: store.slack.status(),
-        discord: store.discord.status(),
-        teams: store.teams.status(),
-        googlechat: store.googleChat.status(),
+        // 送り先(URL やトークンは含めない)。slack などのキーは以前の形との互換
+        ...Object.fromEntries(DESTINATIONS.map((d) => [d.name, store.destinations[d.name].status()])),
+        destinations: DESTINATIONS.map((d) => ({ name: d.name, label: d.label, env: d.env, note: d.note, ...store.destinations[d.name].status() })),
       });
     }
     if (req.method === 'GET' && parts[1] === 'sessions' && parts.length === 2) {
@@ -121,7 +120,7 @@ export function createServer(store, { env = process.env } = {}) {
       try {
         if (req.method === 'GET') {
           const r = await store.report({ ...Object.fromEntries(url.searchParams), ...(fixed ? { target: fixed } : {}) });
-          const previewText = (PLAIN[r.target] || plainFromMrkdwn)(r.preview);
+          const previewText = DEST_BY_NAME[r.target].plain(r.preview);
           return send(res, 200, { target: r.target, preview: r.preview, previewText, hash: r.hash, totals: r.totals, status: r.status, slack: r.status, range: { period: r.range.period, start: r.range.start } });
         }
         if (req.method === 'POST') {
@@ -225,7 +224,10 @@ export function createServer(store, { env = process.env } = {}) {
     }
   };
   watchDir(store.projectsDir, false);
-  if (store.codexDir) watchDir(path.join(store.codexDir, 'sessions'), true);
+  for (const src of SOURCES) {
+    const dir = store.sourceDirs[src.name];
+    if (dir && src.watch) for (const w of src.watch(dir)) watchDir(w, true);
+  }
   const poll = setInterval(trigger, 60 * 1000); // 監視漏れと「進行中→完了」の切り替え用
   // 進行中表示を更新するため、クライアントにも定期的に再取得させる
   const tick = setInterval(() => broadcast('tick'), 60 * 1000);

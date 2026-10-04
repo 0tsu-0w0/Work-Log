@@ -9,23 +9,12 @@ import { summarize } from './summarizer.js';
 import { HookLog, deriveStatus } from './live.js';
 import { sessionGit } from './git.js';
 import { costOf, modelFamily, sessionCost, setPricingOverrides } from './pricing.js';
-import { parseCodexFile } from './codex.js';
 import { extractTaskRefs, normalizeConfig, refsFromText, resolveRef, repoInfoOf } from './tasks.js';
 import { Trackers } from './trackers/index.js';
 import { buildWorkLog } from './worklog.js';
-import { Slack } from './slack.js';
-import { Discord } from './discord.js';
-import { Teams } from './teams.js';
-import { GoogleChat } from './googlechat.js';
-import { periodRange, buildReport, toSlack, sessionEndMessage, toDiscord, sessionEndDiscord, toTeams, sessionEndTeams, toGoogleChat, sessionEndGoogleChat, validTimeZone, todayIn } from './report.js';
-
-// 日報・週報と通知の送り先ごとの書式
-const FORMATS = {
-  slack: { report: toSlack, sessionEnd: sessionEndMessage },
-  discord: { report: toDiscord, sessionEnd: sessionEndDiscord },
-  teams: { report: toTeams, sessionEnd: sessionEndTeams },
-  googlechat: { report: toGoogleChat, sessionEnd: sessionEndGoogleChat },
-};
+import { DESTINATIONS, DEST_BY_NAME } from './destinations.js';
+import { SOURCES } from './sources.js';
+import { periodRange, buildReport, validTimeZone, todayIn } from './report.js';
 import { remoteWebBase, webBaseFromRemote } from './git.js';
 import { filterSessions } from './filter.js';
 import { mask, maskDeep } from './mask.js';
@@ -59,17 +48,21 @@ export function fingerprint(session) {
 }
 
 export class Store {
-  constructor({ projectsDir, cacheDir, codexDir = null, github = null, slack = null, discord = null, teams = null, googleChat = null } = defaultPaths()) {
-    this.slack = slack || new Slack();
-    this.discord = discord || new Discord();
-    this.teams = teams || new Teams();
-    this.googleChat = googleChat || new GoogleChat();
-    this.destinations = { slack: this.slack, discord: this.discord, teams: this.teams, googlechat: this.googleChat };
+  // sourceDirs: { codex: dir, ... }(Claude Code 以外のログの場所。省いた取り込み元は読まない)
+  // destinations: { slack: client, ... }(省いた送り先は環境変数から作る)。slack / discord / teams / googleChat は個別に渡してもよい
+  constructor({ projectsDir, cacheDir, codexDir = null, sourceDirs = {}, github = null, destinations = {}, slack = null, discord = null, teams = null, googleChat = null } = defaultPaths()) {
+    const given = { slack, discord, teams, googlechat: googleChat, ...destinations };
+    this.destinations = Object.fromEntries(DESTINATIONS.map((d) => [d.name, given[d.name] || new d.Client()]));
+    this.slack = this.destinations.slack;
+    this.discord = this.destinations.discord;
+    this.teams = this.destinations.teams;
+    this.googleChat = this.destinations.googlechat;
+    this.sourceDirs = Object.fromEntries(Object.entries({ ...(codexDir ? { codex: codexDir } : {}), ...sourceDirs }).filter(([, d]) => d));
     this.slackNotifiedFile = path.join(cacheDir, 'slack-notified.json');
     this.trackers = new Trackers({ cacheDir, github });
     this.github = this.trackers.github;
     this.projectsDir = projectsDir;
-    this.codexDir = codexDir;
+    this.codexDir = this.sourceDirs.codex || null;
     this.cacheDir = cacheDir;
     this.hooks = new HookLog(cacheDir);
     this.cacheFile = path.join(cacheDir, 'sessions.json');
@@ -104,10 +97,7 @@ export class Store {
     }
     this.taskCfg = normalizeConfig(json);
     this.trackers.setConfig(json.tasks || {});
-    this.slack.setConfig(json.slack || {});
-    this.discord.setConfig(json.discord || {});
-    this.teams.setConfig(json.teams || {});
-    this.googleChat.setConfig(json.googlechat || {});
+    for (const d of DESTINATIONS) this.destinations[d.name].setConfig(json[d.name] || {});
   }
 
   // 利用者の単価表(任意)。読めなければ組み込みの単価だけを使う
@@ -121,28 +111,19 @@ export class Store {
     }
   }
 
-  // Codex のログ: <codexDir>/sessions/YYYY/MM/DD/rollout-*.jsonl(.zst) と archived_sessions/
-  async listCodexFiles() {
-    if (!this.codexDir) return [];
+  // Claude Code 以外のツールのログ(sources.js の取り込み元ごと)
+  async listSourceFiles() {
     const out = [];
-    const walk = async (dir, depth) => {
-      let entries;
+    for (const src of SOURCES) {
+      const dir = this.sourceDirs[src.name];
+      if (!dir) continue;
       try {
-        entries = await readdir(dir, { withFileTypes: true });
-      } catch {
-        return;
+        for (const f of await src.list(dir)) out.push({ ...f, tool: src.name });
+      } catch (err) {
+        console.warn(`[work-log] ${src.label} のログを探せません: ${err.message}`);
       }
-      for (const e of entries) {
-        const p = path.join(dir, e.name);
-        if (e.isDirectory() && depth < 4) await walk(p, depth + 1);
-        else if (e.isFile() && /^rollout-.*\.jsonl(\.zst)?$/.test(e.name)) out.push({ file: p, tool: 'codex' });
-      }
-    };
-    await walk(path.join(this.codexDir, 'sessions'), 0);
-    await walk(path.join(this.codexDir, 'archived_sessions'), 0);
-    // 圧縮済みと未圧縮が両方あるときは未圧縮(書き込み中の可能性がある方)を使う
-    const plain = new Set(out.filter((f) => !f.file.endsWith('.zst')).map((f) => f.file));
-    return out.filter((f) => !(f.file.endsWith('.zst') && plain.has(f.file.slice(0, -4))));
+    }
+    return out;
   }
 
   async load() {
@@ -212,7 +193,7 @@ export class Store {
     });
     await this.loadPricing();
     await this.loadConfig();
-    const found = [...(await this.listLogFiles()), ...(await this.listCodexFiles())];
+    const found = [...(await this.listLogFiles()), ...(await this.listSourceFiles())];
     const seen = new Set();
     let changed = 0;
     for (const { file, projectDir, parentId, tool } of found) {
@@ -226,7 +207,9 @@ export class Store {
       const cached = this.files[file];
       if (cached && cached.mtimeMs === st.mtimeMs && cached.size === st.size) continue;
       try {
-        const session = tool === 'codex' ? await parseCodexFile(file) : await parseSessionFile(file, projectDir);
+        const src = tool && tool !== 'claude' ? SOURCES.find((s) => s.name === tool) : null;
+        const session = src ? await src.parse(file) : await parseSessionFile(file, projectDir);
+        if (src) session.tool = src.name;
         session.tool ||= 'claude';
         if (parentId) session.parentId = parentId;
         this.files[file] = { mtimeMs: st.mtimeMs, size: st.size, session };
@@ -417,8 +400,8 @@ export class Store {
   }
 
   destination(target) {
-    const name = Object.hasOwn(FORMATS, target) ? target : 'slack';
-    return { name, dest: this.destinations[name], fmt: FORMATS[name] };
+    const name = Object.hasOwn(DEST_BY_NAME, target) ? target : 'slack';
+    return { name, dest: this.destinations[name], fmt: DEST_BY_NAME[name] };
   }
 
   // 日報・週報。params: { target: 'slack' | 'discord' | 'teams' | 'googlechat', period: 'day' | 'week', date: 'YYYY-MM-DD', tz }
@@ -448,7 +431,7 @@ export class Store {
   // セッション終了の通知(config.json の slack.notify / discord.notify が "session_end" のとき)。hooks の SessionEnd を受けたセッションが対象。
   // 古い終了まで一度に送らないよう、終了から2時間以内のものだけ送る。送ったものは記録して二度送らない
   async notifySessionEnds(now = Date.now()) {
-    const targets = Object.entries(this.destinations).filter(([, d]) => d.status().notify === 'session_end' && d.status().configured);
+    const targets = Object.entries(this.destinations).filter(([name, d]) => DEST_BY_NAME[name].sessionEnd && d.status().notify === 'session_end' && d.status().configured);
     if (!targets.length) return 0;
     const sent = new Set((await readJson(this.slackNotifiedFile, [])) || []);
     const subIdx = this.subagentIndex();
@@ -467,7 +450,7 @@ export class Store {
             const v = this.view(raw, now, subIdx);
             return { ...v, tasks: await this.resolvedTasks(v) };
           })();
-          const msg = FORMATS[name].sessionEnd(maskDeep(view), { includeCost: dest.status().includeCost });
+          const msg = DEST_BY_NAME[name].sessionEnd(maskDeep(view), { includeCost: dest.status().includeCost });
           await dest.post(maskDeep(msg));
           count++;
         } catch (err) {
