@@ -8,7 +8,7 @@ Claude Code の作業履歴を `~/.claude/projects/` 配下の JSONL から自�
 
 - 依存パッケージなし(Node.js 20 以上)
 - `127.0.0.1` のみで待ち受け。Host が `127.0.0.1` / `localhost` 以外の要求は断ります(DNS リバインディング対策)。書き込み系(POST)は、自分以外の Origin からの要求を断ります(他サイトからの CSRF 対策)。hooks からの通知は Origin を付けないので通ります
-- ログは外部に送信しません。LLM 要約だけはオプトインで、送信前に秘匿情報をマスキングします。課題管理サービス(GitHub / GitLab / Linear / Jira / Backlog)の課題の情報取得とコメント投稿も任意で、取得はタスクIDの検出結果をもとに各サービスの API へ問い合わせるだけです(「課題管理サービス連携」を参照)
+- ログは外部に送信しません。LLM 要約だけはオプトインで、送信前に秘匿情報をマスキングします。課題管理サービス(GitHub / GitLab / Linear / Jira / Backlog / Notion)の課題の情報取得とコメント投稿も任意で、取得はタスクIDの検出結果をもとに各サービスの API へ問い合わせるだけです(「課題管理サービス連携」を参照)
 - Claude Code と Codex CLI の両方のログを、同じカレンダーとコストの画面で扱います(ツールで絞り込めます)
 - ログの変更をファイル監視で検知し、画面を自動更新します
 - Claude Code の hooks に登録すると、作業中・入力待ちの状態をリアルタイムに表示します(任意)
@@ -56,6 +56,11 @@ npm test                           # テストを実行
 | `BACKLOG_API_KEY` | Backlog の API キー(`Backlog-API-Key` ヘッダーで送ります) |
 | `WORKLOG_LINEAR_API` | Linear の API の URL。主にテスト用です。既定は `https://api.linear.app/graphql` |
 | `WORKLOG_BACKLOG_API` | Backlog の API のベース URL。主にテスト用です。既定は `https://<スペース>/api/v2` |
+| `NOTION_TOKEN` | Notion のインテグレーションのシークレット(Bearer で送ります)。未設定なら Notion には問い合わせません |
+| `NOTION_API_KEY` | `NOTION_TOKEN` が未設定のときに使うシークレット |
+| `NOTION_DATABASE_ID` | キー形式(`TASK-12`)を探す Notion データベースの ID(`tasks.notion.databaseId` が優先) |
+| `NOTION_DATA_SOURCE_ID` | 同じく Notion のデータソースの ID(`tasks.notion.dataSourceId` が優先) |
+| `WORKLOG_NOTION_API` | Notion の API のベース URL。主にテスト用です。既定は `https://api.notion.com` |
 | `PORT` | 待ち受けポート(`--port` が優先) |
 
 ## Codex 対応
@@ -206,10 +211,11 @@ Claude Code on the web などのクラウドセッションは、ユーザーの
 ### 拾う場所と形式
 
 - 場所: 依頼文、ブランチ名、コミットの件名(Claude Code や Codex が実行して成功したもの)です。
-- 形式: `ABC-123`、`#123`、`owner/repo#123`、`GH-123`、`!123`、`group/project!123`、GitHub の issue / PR の URL、GitLab の issue / MR の URL(`…/-/issues/123`、`…/-/merge_requests/123`)、Linear の issue URL、Jira の browse URL、Backlog の `/view/` URL です。ブランチ名は `123-xxx`、`feature/123-xxx`、`fix/ABC-123-xxx` の形を拾います。
+- 形式: `ABC-123`、`#123`、`owner/repo#123`、`GH-123`、`!123`、`group/project!123`、GitHub の issue / PR の URL、GitLab の issue / MR の URL(`…/-/issues/123`、`…/-/merge_requests/123`)、Linear の issue URL、Jira の browse URL、Backlog の `/view/` URL、Notion のページ URL です。ブランチ名は `123-xxx`、`feature/123-xxx`、`fix/ABC-123-xxx` の形を拾います。
 - `!123` と `group/project!123` は GitLab のマージリクエストです。セッションのリポジトリが GitLab でなければ、解決の段階で捨てます(GitHub のリポジトリでは意味が無いため)。
 - `ABC-123` のプレフィックスには `_` も使えます(`MY_APP-12` など)。ブランチ名では `_` を区切りとして扱うので、`_` を含むキーは拾いません。
 - GitLab の URL はグループを入れ子にできるため、`/-/` の手前までをプロジェクトのパスとみなします(サブグループ対応)。
+- Notion のページ URL は `www.notion.so` / `notion.so` / `<サイト>.notion.site` のものを拾います。ページ ID は、URL 末尾の32桁の16進数か、データベースから開いたときの `?p=<32桁>` です。URL の中のタイトル部分(`Fix-login-` など)は、ラベルに使います。タイトルが無ければ「Notion ページ」と表示します。
 
 誤検出の対策:
 
@@ -244,7 +250,7 @@ Claude Code on the web などのクラウドセッションは、ユーザーの
 - `keyUrl`: キー形式のリンク先です。`{id}` がタスクIDに置き換わります。
 - `urls`: プレフィックスごとのリンク先です。`keyUrl` より優先します。
 - `github`: `false` にすると、`#123` 系(`owner/repo#123`、`GH-123`、GitHub の URL、番号だけのブランチ名)と、GitLab の `!123`・URL も拾いません。
-- `gitlab` / `linear` / `jira` / `backlog`: サービスごとの接続先とキーのプレフィックスです(「課題管理サービス連携」を参照)。
+- `gitlab` / `linear` / `jira` / `backlog` / `notion`: サービスごとの接続先とキーのプレフィックスです(「課題管理サービス連携」を参照)。
 
 ### 手動の付け外し
 
@@ -267,9 +273,9 @@ Claude Code on the web などのクラウドセッションは、ユーザーの
 
 キーワード検索は、タスクIDでも引けます。API では `/api/sessions?task=ID` で絞り込めます(`GET /api/tasks` はタスクごとの集計です)。
 
-### 課題管理サービス連携(GitHub / GitLab / Linear / Jira / Backlog)
+### 課題管理サービス連携(GitHub / GitLab / Linear / Jira / Backlog / Notion)
 
-解決できたタスクについて、各サービスの API から課題の情報を取得して表示します。GitHub と GitLab は設定なしで使えます(トークンが無くても公開リポジトリ・公開プロジェクトなら読めます)。Linear / Jira / Backlog は、接続先や認証情報を設定したときだけ問い合わせます。
+解決できたタスクについて、各サービスの API から課題の情報を取得して表示します。GitHub と GitLab は設定なしで使えます(トークンが無くても公開リポジトリ・公開プロジェクトなら読めます)。Linear / Jira / Backlog / Notion は、接続先や認証情報を設定したときだけ問い合わせます。
 
 共通の動作:
 
@@ -285,7 +291,7 @@ Claude Code on the web などのクラウドセッションは、ユーザーの
 
 - タスクビューでは、タスク欄にサービス名・タイトル・状態・ラベル・担当者を表示します。詳細パネルの「タスク」欄は、状態を表示し、タイトルはホバーで見られます。
 - 取れなかったときは、タスクビューにサービス名と理由を表示します(見つからないか権限がない、認証情報が無いか正しくない、読む権限がない、API 制限中、タイムアウト、接続できない)。それ以外の HTTP エラーは、ステータスコードを表示します。
-- 結果は `~/.work-log/` にサービスごとのファイル `tracker-<name>.json`(`tracker-gitlab.json`、`tracker-linear.json`、`tracker-jira.json`、`tracker-backlog.json`)で保存します。GitHub だけは従来どおり `github.json` です。
+- 結果は `~/.work-log/` にサービスごとのファイル `tracker-<name>.json`(`tracker-gitlab.json`、`tracker-linear.json`、`tracker-jira.json`、`tracker-backlog.json`、`tracker-notion.json`)で保存します。GitHub だけは従来どおり `github.json` です。
 - 再確認までの時間は、進行中(未着手を含む)が 10 分、完了・中止が 1 日、取得に失敗したものが 30 分です。
 - API 制限に達したら、解除の時刻まで、そのサービスには問い合わせません。
 - 画面は取得を最大約 2.5 秒だけ待ちます。それ以上かかる分は裏で取得を続け、取れたら画面を自動更新します。同時に取得するのは 4 件までです(1 回のリクエストは 8 秒でタイムアウトします)。
@@ -302,6 +308,7 @@ Claude Code on the web などのクラウドセッションは、ユーザーの
 | Linear | `LINEAR_API_KEY` | `linear.keys`、`linear.workspace` | `LINEAR_API_KEY` |
 | Jira | `JIRA_BASE_URL`、`JIRA_EMAIL` + `JIRA_API_TOKEN`、`JIRA_PAT` | `jira.baseUrl`、`jira.keys` | 接続先と認証情報 |
 | Backlog | `BACKLOG_SPACE`、`BACKLOG_API_KEY` | `backlog.space`、`backlog.keys` | スペースと `BACKLOG_API_KEY` |
+| Notion | `NOTION_TOKEN` / `NOTION_API_KEY`、`NOTION_DATABASE_ID` / `NOTION_DATA_SOURCE_ID` | `notion.databaseId` / `notion.dataSourceId`、`notion.keys`、`notion.idProperty` | トークン(ページ URL のみ扱うなら)。キー形式も扱うならデータベースの指定も |
 
 ```json
 {
@@ -309,7 +316,8 @@ Claude Code on the web などのクラウドセッションは、ユーザーの
     "gitlab": { "baseUrl": "https://gitlab.example.com" },
     "linear": { "keys": ["<PREFIX>"], "workspace": "<workspace>" },
     "jira": { "baseUrl": "https://<your-site>.atlassian.net", "keys": ["<PREFIX>"] },
-    "backlog": { "space": "<space>.backlog.jp", "keys": ["<PREFIX>"] }
+    "backlog": { "space": "<space>.backlog.jp", "keys": ["<PREFIX>"] },
+    "notion": { "databaseId": "<32桁のデータベースID>", "keys": ["<PREFIX>"], "idProperty": "<IDプロパティ名>" }
   }
 }
 ```
@@ -318,11 +326,11 @@ Claude Code on the web などのクラウドセッションは、ユーザーの
 
 #### `ABC-123` 形式の振り分け
 
-`ABC-123` のようなキー形式は、Linear・Jira・Backlog のどれの課題か分からないので、次の順で決めます。
+`ABC-123` のようなキー形式は、Linear・Jira・Backlog・Notion のどれの課題か分からないので、次の順で決めます。
 
-1. ログ中の URL のホスト: `linear.app` は Linear、`*.backlog.jp` / `*.backlog.com`(`backlogtool` のドメインも)は Backlog、`/browse/` を含み `*.atlassian.net` か設定した Jira のホストなら Jira です。
-2. `tasks.<サービス>.keys` のプレフィックス(Linear、Jira、Backlog の順に調べます)。
-3. 設定済みのキー形式のサービスが 1 つだけならそのサービス。「設定済み」は、Linear は `LINEAR_API_KEY` があるとき、Jira は接続先 URL があるとき、Backlog はスペースがあるときです。
+1. ログ中の URL のホスト: `linear.app` は Linear、`notion.so` / `www.notion.so` / `*.notion.site` は Notion、`*.backlog.jp` / `*.backlog.com`(`backlogtool` のドメインも)は Backlog、`/browse/` を含み `*.atlassian.net` か設定した Jira のホストなら Jira です。
+2. `tasks.<サービス>.keys` のプレフィックス(Linear、Jira、Backlog、Notion の順に調べます)。
+3. 設定済みのキー形式のサービスが 1 つだけならそのサービス。「設定済み」は、Linear は `LINEAR_API_KEY` があるとき、Jira は接続先 URL があるとき、Backlog はスペースがあるとき、Notion はトークンとデータベース(またはデータソース)の指定があるときです。
 4. 決まらなければ、リンクのみにします(従来の `keyUrl` / `urls`)。情報は取得しません。
 
 #### GitHub
@@ -369,21 +377,37 @@ issue(`#123`)と マージリクエスト(`!123`)が対象です。
 - 状態は Backlog の状態名を表示します。分類は、標準の状態で 未対応が未着手、処理中・処理済みが進行中、完了が完了です。プロジェクトで追加した状態は進行中とみなします。ラベルには、課題のカテゴリを表示します。
 - `tasks.backlog.keys` はプロジェクトキーのプレフィックスです。リンク先は `https://<スペース>/view/<ID>` です。
 
+#### Notion
+
+- トークンは `NOTION_TOKEN`(無ければ `NOTION_API_KEY`)のインテグレーションのシークレットで、`Authorization: Bearer` で送ります。無ければ問い合わせません。API のバージョン(`Notion-Version`)は `2025-09-03` です。
+- ページ URL のタスクは、ページ ID でそのまま取得します。ページは、そのインテグレーションに共有しておく必要があります。
+- `TASK-12` のようなキー形式は、Notion データベースの ID プロパティ(`unique_id`)の値として扱います。`tasks.notion.databaseId`(または `dataSourceId`。環境変数 `NOTION_DATABASE_ID` / `NOTION_DATA_SOURCE_ID` でも可)の指定が必要で、データベースもインテグレーションに共有しておきます。データベースだけを指定したときは、最初のデータソースで探します。ID プロパティは、`tasks.notion.idProperty` で名前を指定できます。省略すると、接頭辞が一致する `unique_id` プロパティを自動で探します。
+- 取得する内容は次のとおりです。
+  - タイトル: `title` プロパティです。
+  - 状態: `status` プロパティです。無ければ、値のある `select` を使います。
+  - タグ: 最初の `multi_select` です。Notion の色名(gray / brown / orange など)を色に変換します。
+  - 担当者: 最初の `people` です。
+  - 種類の欄: ID プロパティがあれば `TASK-12` のように表示し、無ければ「Page」と表示します。
+- 状態の分類は、データソースの `status` のグループで決めます。既定の To-do が未着手、In progress が進行中、Complete が完了です。状態名に「中止」「見送り」「cancel」などを含むときは、中止・見送りとします。データソースの定義は 1 時間使い回します。
+- `tasks.notion.keys` はキーのプレフィックスです。リンク先は、取得したページの URL です。
+
 #### 作業記録のコメント
 
-課題に、そのタスクの作業記録をコメントとして投稿できます。対象は GitHub に限らず、GitLab・Linear・Jira・Backlog の課題です。
+課題に、そのタスクの作業記録をコメントとして投稿できます。対象は GitHub に限らず、GitLab・Linear・Jira・Backlog・Notion の課題です。
 
 1. タスクビューでタスクを▸で展開し、「<サービス> の <ID> に作業記録をコメント…」を押します。ボタンは、課題の情報が取得できたタスクにだけ出ます(まだ取得できていない課題や、見つからない課題には出ません)。
 2. 確認ダイアログに、投稿される本文がそのまま表示されます。本文は、セッションの開始時刻・タイトル・ツール・作業時間・コミット数(とハッシュ)と、合計です。時刻はブラウザのタイムゾーンで書きます。
 3. 「投稿する」を押したときだけ投稿します。「やめる」では何も送りません。
 
-本文の書式は、サービスに合わせて 3 通りに書き分けます。
+本文の書式は、サービスに合わせて 3 通りに書き分けます。Notion は、Backlog と同じプレーンテキストです。
 
 | サービス | 書式 |
 | --- | --- |
 | GitHub / GitLab / Linear | Markdown の表 |
 | Jira | Wiki 記法の表。`\|`、`{`、`}`、`[`、`]` は記法として解釈されるため、全角にします |
-| Backlog | 箇条書きのプレーンテキスト。プロジェクトの記法が Backlog 記法でも Markdown でも崩れないよう、表を使いません |
+| Backlog / Notion | 箇条書きのプレーンテキスト。Backlog は、プロジェクトの記法が Backlog 記法でも Markdown でも崩れないよう、表を使いません |
+
+Notion には `POST /v1/comments` で、ページへのコメントとして投稿します。本文は `rich_text` を 2000 文字ずつに分けて送ります。キー形式のタスクは、ID プロパティで探したページに投稿します。コメントを投稿できるかは、Notion 側のインテグレーションの権限設定によります。リンクは、ページの URL です。
 
 - 本文は秘匿情報をマスキングします(`WORKLOG_NO_MASK=1` の対象外です)。
 - プレビューの後にセッションが進むなどして内容が変わったときは、投稿せずに、もう一度確認するよう求めます。
@@ -396,6 +420,7 @@ issue(`#123`)と マージリクエスト(`!123`)が対象です。
 - GitLab: 実際の公開 API で、issue、MR、見つからないもの、ETag の再確認(304)まで確認しました。コメントの投稿は、実際の API では確認していません。
 - GitHub: 応答形式はテストの偽サーバーで確認しています。実際の API には、「見つからない」の応答まで接続して確認しました。実在する issue の取得とコメントの投稿は、実際の API では確認していません。
 - Linear / Jira / Backlog: この開発環境から接続できないため、実際のサービスでは確認していません。公式の SDK / ドキュメント(`@linear/sdk` の型定義、gitlabhq の `doc/api`、nulab/backlog-js、jira.js)に合わせた偽サーバーとテストでだけ確認しています。実際に使うときは、まず取得の表示から確かめてください。
+- Notion: Notion の API にもこの開発環境から接続できないため、実際のサービスでは確認していません。公式 SDK(`@notionhq/client`、`Notion-Version` 2025-09-03)の型定義に合わせた偽サーバーとテスト(`test/notion.test.js`)でだけ確認しています。取得もコメントの投稿も、実際に使うときはまず取得の表示から確かめてください。
 
 ## 各値の算出方法
 
@@ -422,7 +447,7 @@ issue(`#123`)と マージリクエスト(`!123`)が対象です。
 - `config.json`: タスク管理連携の設定です(任意、利用者が作成)。形式は「タスク管理連携」の「設定」を参照してください。
 - `links.json`: 詳細パネルから手で付け外ししたタスクです。
 - `github.json`: GitHub の issue / PR の取得結果(ETag を含む)です。形式と再確認の間隔は「タスク管理連携」の「課題管理サービス連携」を参照してください。
-- `tracker-<name>.json`: GitLab / Linear / Jira / Backlog の課題の取得結果です(`tracker-gitlab.json` など。GitLab は ETag を含む)。再確認の間隔は GitHub と同じです。
+- `tracker-<name>.json`: GitLab / Linear / Jira / Backlog / Notion の課題の取得結果です(`tracker-gitlab.json`、`tracker-notion.json` など。GitLab は ETag を含む)。再確認の間隔は GitHub と同じです。
 
 ## ディレクトリ構成
 
@@ -441,7 +466,7 @@ src/
   worklog.js     課題に投稿する作業記録のコメント本文。Markdown / Jira 記法 / プレーンテキストの3書式
   trackers/      課題管理サービス連携
     base.js        共通部分。キャッシュ、再確認の間隔、API 制限中の停止、同時取得数、タイムアウト
-    providers.js   GitLab / Linear / Jira / Backlog の取得とコメント投稿
+    providers.js   GitLab / Linear / Jira / Backlog / Notion の取得とコメント投稿
     index.js       サービスの一覧、設定の反映、`ABC-123` 形式の振り分け、タスクへの課題情報の付与
   filter.js      セッション一覧の絞り込み(期間・プロジェクト・タグ・ツール・タスク・キーワード)
   parser.js      JSONL を 1 セッションの集計レコードに変換
