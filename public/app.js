@@ -2,6 +2,9 @@ const $ = (id) => document.getElementById(id);
 const HOUR_PX = 48;
 const MIN_BLOCK_PX = 14;
 const DAY_NAMES = ['月', '火', '水', '木', '金', '土', '日'];
+const STATUS_LABEL = { working: '作業中', waiting: '入力待ち', done: '完了' };
+const SOURCE_LABEL = { startup: '新規起動', resume: '再開', clear: '/clear 後', compact: 'コンパクト後', fork: 'フォーク' };
+const END_LABEL = { clear: '/clear', resume: '別セッションを再開', logout: 'ログアウト', prompt_input_exit: '終了操作', other: 'その他' };
 
 const state = {
   weekStart: startOfWeek(new Date()),
@@ -114,15 +117,18 @@ function piecesForDay(day) {
   const dayStart = day.getTime();
   const dayEnd = addDays(day, 1).getTime();
   const pieces = [];
+  const now = Date.now();
   for (const s of state.sessions) {
-    for (const seg of s.segments) {
+    s.segments.forEach((seg, i) => {
+      // 作業中のセッションは、最後のブロックを現在時刻まで伸ばす
+      const segEnd = s.status === 'working' && i === s.segments.length - 1 ? Math.max(Date.parse(seg.end), now) : Date.parse(seg.end);
       const a = Math.max(Date.parse(seg.start), dayStart);
-      const b = Math.min(Math.max(Date.parse(seg.end), Date.parse(seg.start) + 60000), dayEnd);
-      if (b <= a) continue;
+      const b = Math.min(Math.max(segEnd, Date.parse(seg.start) + 60000), dayEnd);
+      if (b <= a) return;
       const top = ((a - dayStart) / 3600000) * HOUR_PX;
       const height = Math.max(((b - a) / 3600000) * HOUR_PX, MIN_BLOCK_PX);
       pieces.push({ s, a, b, top, height, bottom: top + height });
-    }
+    });
   }
   return pieces.sort((x, y) => x.top - y.top || y.height - x.height);
 }
@@ -157,14 +163,14 @@ function layoutLanes(pieces) {
 function blockEl(p) {
   const { s } = p;
   const el = document.createElement('div');
-  el.className = `block ${s.status === 'active' ? 'active' : ''} ${s.id === state.selectedId ? 'selected' : ''}`;
+  el.className = `block ${s.status} ${s.id === state.selectedId ? 'selected' : ''}`;
   el.dataset.id = s.id;
   el.style.top = `${p.top}px`;
   el.style.height = `${p.height}px`;
   el.style.left = `calc(${(p.lane / p.lanes) * 100}% + 2px)`;
   el.style.width = `calc(${100 / p.lanes}% - 4px)`;
   el.style.background = projectColor(s.project);
-  el.title = `${s.displayTitle}\n${s.project} · ${fmtTime(new Date(p.a))}〜${fmtTime(new Date(p.b))}`;
+  el.title = `${s.displayTitle}\n${s.project} · ${fmtTime(new Date(p.a))}〜${fmtTime(new Date(p.b))} · ${STATUS_LABEL[s.status]}`;
   el.innerHTML = `<div class="t">${esc(s.displayTitle)}</div>` + (p.height > 30 ? `<div class="m">${esc(s.project)} · ${fmtTime(new Date(p.a))}</div>` : '');
   el.addEventListener('click', () => showDetail(s.id));
   return el;
@@ -223,12 +229,12 @@ async function showDetail(id, { quiet = false } = {}) {
     <button id="close" title="閉じる">← 週の集計</button>
     <h2>${esc(s.displayTitle)}</h2>
     <div>
-      <span class="badge ${s.status}">${s.status === 'active' ? '進行中' : '完了'}</span>
+      <span class="badge ${s.status}">${STATUS_LABEL[s.status]}</span>
       <span class="badge type tag" data-tag="${esc(s.workType)}">${esc(s.workType)}</span>
       ${s.components.map((c) => `<span class="badge tag" data-tag="${esc(c)}">${esc(c)}</span>`).join('')}
     </div>
     <p class="meta"><span class="proj-dot" style="background:${projectColor(s.project)}"></span>${esc(s.project)}${s.gitBranch ? ` · ${esc(s.gitBranch)}` : ''}</p>
-    <p class="meta">${fmtDate(start)} ${fmtTime(start)} 〜 ${sameDay(start, end) ? '' : fmtDate(end) + ' '}${fmtTime(end)}(作業 ${fmtDuration(s.activeMs)})</p>
+    <p class="meta">${fmtDate(start)} ${fmtTime(start)} 〜 ${s.status === 'working' ? '現在' : (sameDay(start, end) ? '' : fmtDate(end) + ' ') + fmtTime(end)}(作業 ${fmtDuration(s.activeMs)})</p>
     <div class="kv">
       <div><b>${s.commits}</b><span>コミット</span></div>
       <div><b>${s.changedFiles.length}</b><span>変更ファイル</span></div>
@@ -246,6 +252,7 @@ async function showDetail(id, { quiet = false } = {}) {
     <p class="meta">ツール: ${esc(tools || 'なし')}</p>
     <p class="meta">トークン: 入力 ${fmtNum(s.tokens.input + s.tokens.cacheRead + s.tokens.cacheCreation)}(キャッシュ読込 ${fmtNum(s.tokens.cacheRead)})/ 出力 ${fmtNum(s.tokens.output)}</p>
     <p class="meta">モデル: ${esc(s.models.join(', ') || '-')}</p>
+    ${s.hook ? `<p class="meta">hooks: ${s.hook.source ? `開始 ${esc(SOURCE_LABEL[s.hook.source] || s.hook.source)} · ` : ''}${s.hook.endedAt ? `終了 ${fmtTime(new Date(s.hook.endedAt))}(${esc(END_LABEL[s.hook.endReason] || s.hook.endReason || '-')}) · ` : ''}最終イベント ${esc(s.hook.lastEvent)} ${fmtTime(new Date(s.hook.lastEventAt))}</p>` : ''}
     <p class="meta small">${esc(s.cwd || '')}<br>${esc(s.id)}</p>`;
 
   $('close').onclick = () => {
@@ -327,8 +334,20 @@ function connectEvents() {
   es.addEventListener('tick', refresh);
 }
 
+function renderHooksBadge() {
+  const el = $('hooks');
+  const h = state.config.hooks;
+  const on = h.installed.length > 0;
+  el.className = `hooks-badge ${on ? 'on' : ''}`;
+  el.textContent = on ? 'hooks連携中' : 'hooks未設定';
+  el.title = on
+    ? `登録イベント: ${h.installed.join(', ')}\n最終受信: ${h.lastEventAt ? new Date(h.lastEventAt).toLocaleString('ja-JP') : 'まだありません'}`
+    : 'node src/cli.js hooks install を実行すると、作業中/入力待ちの状態をリアルタイムに記録します';
+}
+
 (async () => {
   state.config = await api('/api/config');
+  renderHooksBadge();
   await loadWeek();
   // 8時付近を初期表示位置にする
   $('cal-body').scrollTop = HOUR_PX * 8;

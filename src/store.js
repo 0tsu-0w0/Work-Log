@@ -2,22 +2,15 @@
 // 変更のあったファイル(mtime/size が変わったもの)だけを再解析する。
 import { readdir, stat, readFile, writeFile, mkdir, rename } from 'node:fs/promises';
 import path from 'node:path';
-import os from 'node:os';
+import { defaultPaths } from './paths.js';
 import { parseSessionFile } from './parser.js';
 import { heuristicSummary } from './tagger.js';
 import { summarize } from './summarizer.js';
+import { HookLog, deriveStatus } from './live.js';
 
 const CACHE_VERSION = 1;
-// 最終アクティビティからこの時間以内なら「進行中」とみなす
-export const ACTIVE_WINDOW_MS = 5 * 60 * 1000;
 
-export function defaultPaths(env = process.env) {
-  const home = os.homedir();
-  return {
-    projectsDir: env.WORKLOG_PROJECTS_DIR || path.join(env.CLAUDE_CONFIG_DIR || path.join(home, '.claude'), 'projects'),
-    cacheDir: env.WORKLOG_CACHE_DIR || path.join(home, '.work-log'),
-  };
-}
+export { defaultPaths };
 
 async function readJson(file, fallback) {
   try {
@@ -42,6 +35,8 @@ export function fingerprint(session) {
 export class Store {
   constructor({ projectsDir, cacheDir } = defaultPaths()) {
     this.projectsDir = projectsDir;
+    this.cacheDir = cacheDir;
+    this.hooks = new HookLog(cacheDir);
     this.cacheFile = path.join(cacheDir, 'sessions.json');
     this.summaryFile = path.join(cacheDir, 'summaries.json');
     this.files = {}; // file -> { mtimeMs, size, session }
@@ -79,14 +74,26 @@ export class Store {
     return out;
   }
 
-  // 同時に複数回呼ばれても実際のスキャンは1本にまとめる
+  // 同時に複数回呼ばれても実際のスキャンは1本にまとめる。
+  // 実行中に呼ばれたら、その後にもう1回だけ走らせる(実行中に届いたフック通知を取りこぼさないため)
   scan() {
-    if (!this.scanning) this.scanning = this._scan().finally(() => (this.scanning = null));
+    if (this.scanning) {
+      this.rescan ||= this.scanning.then(() => {
+        this.rescan = null;
+        return this.scan();
+      });
+      return this.rescan;
+    }
+    this.scanning = this._scan().finally(() => (this.scanning = null));
     return this.scanning;
   }
 
   async _scan() {
     if (!this.loaded) await this.load();
+    const hookEvents = await this.hooks.ingest().catch((err) => {
+      console.warn(`[work-log] フックイベントの取り込みに失敗: ${err.message}`);
+      return 0;
+    });
     const found = await this.listLogFiles();
     const seen = new Set();
     let changed = 0;
@@ -115,7 +122,7 @@ export class Store {
       }
     }
     if (changed) await writeJsonAtomic(this.cacheFile, { version: CACHE_VERSION, files: this.files });
-    return { total: found.length, changed };
+    return { total: found.length, changed, hookEvents };
   }
 
   rawSessions() {
@@ -139,9 +146,11 @@ export class Store {
 
   view(session, now = Date.now()) {
     const sum = this.summaryFor(session);
+    const hook = this.hooks.get(session.id);
     return {
       ...session,
-      status: now - Date.parse(session.end) < ACTIVE_WINDOW_MS ? 'active' : 'done',
+      status: deriveStatus(hook, session.end, now),
+      hook: hook && { startedAt: hook.startedAt, source: hook.source, endedAt: hook.endedAt, endReason: hook.endReason, lastEvent: hook.lastEvent, lastEventAt: hook.lastEventAt },
       displayTitle: sum.title || session.title,
       summary: sum.summary,
       summarySource: sum.source,

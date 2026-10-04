@@ -60,6 +60,8 @@ button:disabled { opacity: .5; cursor: default; }
 .range { margin-left: 8px; font-weight: 600; }
 .live { color: var(--muted); font-size: 10px; }
 .live.on { color: #22a06b; }
+.hooks-badge { font-size: 11px; color: var(--muted); border: 1px solid var(--line-strong); border-radius: 999px; padding: 1px 8px; cursor: help; }
+.hooks-badge.on { color: #22a06b; border-color: #22a06b; }
 
 .layout { flex: 1; display: grid; grid-template-columns: 1fr 360px; min-height: 0; }
 @media (max-width: 900px) {
@@ -117,7 +119,10 @@ button:disabled { opacity: .5; cursor: default; }
 .block:hover { z-index: 2; filter: brightness(1.08); }
 .block.selected { outline: 2px solid var(--text); outline-offset: 1px; z-index: 2; }
 .block.dim { opacity: .2; }
-.block.active { box-shadow: 0 0 0 2px #22a06b inset; }
+.block.working { box-shadow: 0 0 0 2px #22a06b inset; animation: pulse 2s ease-in-out infinite; }
+.block.waiting { box-shadow: 0 0 0 2px #e0a100 inset; }
+@keyframes pulse { 50% { filter: brightness(1.15); } }
+@media (prefers-reduced-motion: reduce) { .block.working { animation: none; } }
 .block .t { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .block .m { opacity: .85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
@@ -135,7 +140,8 @@ button:disabled { opacity: .5; cursor: default; }
   margin: 0 4px 4px 0;
   background: transparent;
 }
-.badge.active { background: #22a06b; color: #fff; border-color: #22a06b; }
+.badge.working { background: #22a06b; color: #fff; border-color: #22a06b; }
+.badge.waiting { background: #e0a100; color: #fff; border-color: #e0a100; }
 .badge.done { color: var(--muted); }
 .badge.type { background: var(--accent); color: #fff; border-color: var(--accent); }
 .badge.tag { cursor: pointer; }

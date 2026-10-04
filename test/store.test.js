@@ -26,17 +26,34 @@ test('変更のあったファイルだけ再解析し、キャッシュから�
   const { root, store, file, projectsDir } = await setup();
   t.after(() => rm(root, { recursive: true, force: true }));
 
-  assert.deepEqual(await store.scan(), { total: 1, changed: 1 });
-  assert.deepEqual(await store.scan(), { total: 1, changed: 0 });
+  assert.deepEqual(await store.scan(), { total: 1, changed: 1, hookEvents: 0 });
+  assert.deepEqual(await store.scan(), { total: 1, changed: 0, hookEvents: 0 });
 
   const line = JSON.stringify({ type: 'user', timestamp: '2026-09-28T03:40:00.000Z', message: { role: 'user', content: 'テストも追加して' } });
   await appendFile(file, line + '\n');
-  assert.deepEqual(await store.scan(), { total: 1, changed: 1 });
+  assert.deepEqual(await store.scan(), { total: 1, changed: 1, hookEvents: 0 });
   assert.equal(store.sessions()[0].userMessages, 3);
 
   const reloaded = new Store({ projectsDir, cacheDir: path.join(root, 'cache') });
-  assert.deepEqual(await reloaded.scan(), { total: 1, changed: 0 });
+  assert.deepEqual(await reloaded.scan(), { total: 1, changed: 0, hookEvents: 0 });
   assert.equal(reloaded.sessions()[0].userMessages, 3);
+});
+
+test('スキャン中に呼ばれたら、終わった後にもう1回スキャンする', async (t) => {
+  const { root, store } = await setup();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  let runs = 0;
+  const orig = store._scan.bind(store);
+  store._scan = async () => {
+    runs++;
+    return orig();
+  };
+  const first = store.scan();
+  const second = store.scan();
+  const third = store.scan();
+  await Promise.all([first, second, third]);
+  assert.equal(second, third);
+  assert.equal(runs, 2);
 });
 
 test('進行中の判定', async (t) => {
@@ -44,7 +61,7 @@ test('進行中の判定', async (t) => {
   t.after(() => rm(root, { recursive: true, force: true }));
   await store.scan();
   const end = Date.parse('2026-09-28T03:31:00.000Z');
-  assert.equal(store.sessions(end + 60000)[0].status, 'active');
+  assert.equal(store.sessions(end + 60000)[0].status, 'working');
   assert.equal(store.sessions(end + 10 * 60000)[0].status, 'done');
 });
 

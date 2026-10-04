@@ -1,15 +1,18 @@
 // ローカル専用のHTTPサーバー。127.0.0.1 にのみバインドする。
 import http from 'node:http';
-import { readFile, watch } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, watch } from 'node:fs/promises';
+import { rmSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mask } from './mask.js';
 import { llmAvailable, DEFAULT_MODEL } from './summarizer.js';
+import { SERVER_FILE } from './hook.js';
+import { status as hooksStatus, settingsPath } from './install.js';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
 const LIST_FIELDS = [
-  'id', 'project', 'cwd', 'gitBranch', 'displayTitle', 'start', 'end', 'segments', 'activeMs', 'status',
+  'id', 'project', 'cwd', 'gitBranch', 'displayTitle', 'start', 'end', 'segments', 'activeMs', 'status', 'hook',
   'messageCount', 'commits', 'workType', 'components', 'summarySource',
 ];
 
@@ -54,7 +57,14 @@ export function createServer(store, { env = process.env } = {}) {
   async function handleApi(req, res, url) {
     const parts = url.pathname.split('/').filter(Boolean); // ['api', ...]
     if (req.method === 'GET' && parts[1] === 'config') {
-      return send(res, 200, { llm: llmAvailable(env), model: env.WORKLOG_MODEL || DEFAULT_MODEL, masking: shouldMask, projectsDir: store.projectsDir });
+      const hooks = await hooksStatus({ file: settingsPath(env) });
+      return send(res, 200, {
+        llm: llmAvailable(env),
+        model: env.WORKLOG_MODEL || DEFAULT_MODEL,
+        masking: shouldMask,
+        projectsDir: store.projectsDir,
+        hooks: { installed: hooks.events, lastEventAt: store.hooks.lastEventAt },
+      });
     }
     if (req.method === 'GET' && parts[1] === 'sessions' && parts.length === 2) {
       const all = store.sessions();
@@ -78,9 +88,11 @@ export function createServer(store, { env = process.env } = {}) {
         return send(res, 502, { error: err.message });
       }
     }
-    if (req.method === 'POST' && parts[1] === 'rescan') {
+    // hook / rescan: フックからの通知と手動の再スキャン。どちらも差分を取り込んで画面へ知らせる
+    if (req.method === 'POST' && (parts[1] === 'rescan' || parts[1] === 'hook')) {
+      req.resume();
       const r = await store.scan();
-      if (r.changed) broadcast('update');
+      if (r.changed || r.hookEvents) broadcast('update');
       return send(res, 200, r);
     }
     if (req.method === 'GET' && parts[1] === 'events') {
@@ -126,7 +138,7 @@ export function createServer(store, { env = process.env } = {}) {
     clearTimeout(timer);
     timer = setTimeout(async () => {
       const r = await store.scan().catch(() => ({ changed: 0 }));
-      if (r.changed) broadcast('update');
+      if (r.changed || r.hookEvents) broadcast('update');
     }, 500);
   };
   (async () => {
@@ -139,7 +151,14 @@ export function createServer(store, { env = process.env } = {}) {
   const poll = setInterval(trigger, 60 * 1000); // 監視漏れと「進行中→完了」の切り替え用
   // 進行中表示を更新するため、クライアントにも定期的に再取得させる
   const tick = setInterval(() => broadcast('tick'), 60 * 1000);
+  // フックが通知先を見つけられるよう、待ち受けポートを書き出しておく
+  const serverFile = path.join(store.cacheDir, SERVER_FILE);
+  server.on('listening', async () => {
+    await mkdir(store.cacheDir, { recursive: true });
+    await writeFile(serverFile, JSON.stringify({ port: server.address().port, pid: process.pid }));
+  });
   server.on('close', () => {
+    rmSync(serverFile, { force: true }); // 直後に process.exit されても消えるよう同期で
     ac.abort();
     clearInterval(poll);
     clearInterval(tick);
