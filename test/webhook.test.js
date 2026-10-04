@@ -45,7 +45,7 @@ test('送信: JSON を POST する。鍵があれば本文の HMAC-SHA256 と時
   await s.post({ type: 'x', text: '日本語' });
   const c = g.calls[0];
   assert.equal(c.headers['x-worklog-timestamp'], '1790000000');
-  assert.equal(c.headers['x-worklog-signature'], `sha256=${createHmac('sha256', 's3cret').update(c.body).digest('hex')}`);
+  assert.equal(c.headers['x-worklog-signature'], `sha256=${createHmac('sha256', 's3cret').update(`1790000000.${c.body}`).digest('hex')}`);
   assert.match(c.headers['x-worklog-signature'], /^sha256=[0-9a-f]{64}$/);
 });
 

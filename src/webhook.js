@@ -1,8 +1,8 @@
 // 汎用 Webhook への送信(Zapier / n8n / Make など)。WORKLOG_WEBHOOK_URL に、日報・週報とセッション終了の通知を JSON で POST する。
 // URL は https か、手元の受け口(localhost / 127.0.0.1 / ::1)だけ http も使える。
-// WORKLOG_WEBHOOK_SECRET を設定すると、本文(送るバイト列そのまま)の HMAC-SHA256 を X-WorkLog-Signature: sha256=<hex> に付ける。
-// 受け取る側は同じ鍵で本文の HMAC を計算して比べる。X-WorkLog-Timestamp は送った時刻(秒)で、署名の対象には含まない
-// (古い通知を捨てたい受け手が見る目安)。URL と鍵はサーバー側だけで使い、ブラウザには渡さない。
+// WORKLOG_WEBHOOK_SECRET を設定すると、X-WorkLog-Timestamp(送った時刻・秒)と
+// X-WorkLog-Signature: sha256=<hex>(「<時刻>.<本文>」の HMAC-SHA256。本文は送るバイト列そのまま)を付ける。
+// 受け取る側は同じ鍵で HMAC を計算して比べ、時刻が古すぎるものは捨てる(時刻も署名に含むので、同じ通知の使い回しを防げる)。URL と鍵はサーバー側だけで使い、ブラウザには渡さない。
 import { createHmac } from 'node:crypto';
 
 const TIMEOUT_MS = 10000;
@@ -50,8 +50,9 @@ export class Webhook {
     const headers = { 'content-type': 'application/json; charset=UTF-8', 'user-agent': 'work-log' };
     const secret = this.env.WORKLOG_WEBHOOK_SECRET;
     if (secret) {
-      headers['x-worklog-timestamp'] = String(Math.floor(this.now() / 1000));
-      headers['x-worklog-signature'] = `sha256=${createHmac('sha256', secret).update(body).digest('hex')}`;
+      const ts = String(Math.floor(this.now() / 1000));
+      headers['x-worklog-timestamp'] = ts;
+      headers['x-worklog-signature'] = `sha256=${createHmac('sha256', secret).update(`${ts}.${body}`).digest('hex')}`;
     }
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), TIMEOUT_MS);
