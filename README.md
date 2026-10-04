@@ -8,11 +8,11 @@ Claude Code の作業履歴を `~/.claude/projects/` 配下の JSONL から自�
 
 - 依存パッケージなし(Node.js 20 以上)
 - `127.0.0.1` のみで待ち受け。Host が `127.0.0.1` / `localhost` 以外の要求は断ります(DNS リバインディング対策)。書き込み系(POST)は、自分以外の Origin からの要求を断ります(他サイトからの CSRF 対策)。hooks からの通知は Origin を付けないので通ります
-- ログは外部に送信しません。LLM 要約だけはオプトインで、送信前に秘匿情報をマスキングします。課題管理サービス(GitHub / GitLab / Linear / Jira / Backlog / Notion)の課題の情報取得とコメント投稿も任意で、取得はタスクIDの検出結果をもとに各サービスの API へ問い合わせるだけです(「課題管理サービス連携」を参照)。Slack / Discord / Teams への日報・週報の送信も任意で、送るのは利用者が操作したとき(または通知を設定したとき)だけです(「Slack / Discord / Teams 連携」を参照)
+- ログは外部に送信しません。LLM 要約だけはオプトインで、送信前に秘匿情報をマスキングします。課題管理サービス(GitHub / GitLab / Linear / Jira / Backlog / Notion)の課題の情報取得とコメント投稿も任意で、取得はタスクIDの検出結果をもとに各サービスの API へ問い合わせるだけです(「課題管理サービス連携」を参照)。Slack / Discord / Teams / Google Chat への日報・週報の送信も任意で、送るのは利用者が操作したとき(または通知を設定したとき)だけです(「Slack / Discord / Teams / Google Chat 連携」を参照)
 - Claude Code と Codex CLI の両方のログを、同じカレンダーとコストの画面で扱います(ツールで絞り込めます)
 - ログの変更をファイル監視で検知し、画面を自動更新します
 - Claude Code の hooks に登録すると、作業中・入力待ちの状態をリアルタイムに表示します(任意)
-- 日報・週報を Slack や Discord、Microsoft Teams に送れます。セッション終了の通知も任意で設定できます(Slack / Discord / Teams 連携)
+- 日報・週報を Slack や Discord、Microsoft Teams、Google Chat に送れます。セッション終了の通知も任意で設定できます(Slack / Discord / Teams / Google Chat 連携)
 
 ## 使い方
 
@@ -25,11 +25,12 @@ node src/cli.js summarize ID --force   # 要約済みでも再生成
 node src/cli.js hooks install      # Claude Code の hooks に登録 (hooks 連携を参照)
 node src/cli.js hooks status       # 登録状況を表示
 node src/cli.js hooks uninstall    # 登録を削除
-node src/cli.js report             # 今日の日報をターミナルに表示 (Slack / Discord / Teams 連携を参照)
+node src/cli.js report             # 今日の日報をターミナルに表示 (Slack / Discord / Teams / Google Chat 連携を参照)
 node src/cli.js report --week      # 今週の週報を表示
 node src/cli.js report --slack     # 表示して、Slack にも送る
 node src/cli.js report --discord   # 表示して、Discord にも送る (--slack と併用可)
 node src/cli.js report --teams     # 表示して、Teams にも送る (--slack / --discord と併用可)
+node src/cli.js report --google-chat  # 表示して、Google Chat にも送る (他の送り先と併用可)
 npm test                           # テストを実行
 ```
 
@@ -75,6 +76,8 @@ npm test                           # テストを実行
 | `WORKLOG_DISCORD_WEBHOOK_ANY=1` | `DISCORD_WEBHOOK_URL` に Discord 以外の URL も許します。テスト用です |
 | `TEAMS_WEBHOOK_URL` | Teams の Workflows(Power Automate)の Webhook の URL か、従来の Incoming Webhook の URL。Microsoft の Webhook の URL だけ使います |
 | `WORKLOG_TEAMS_WEBHOOK_ANY=1` | `TEAMS_WEBHOOK_URL` に Microsoft 以外の URL も許します。テスト用です |
+| `GOOGLE_CHAT_WEBHOOK_URL` | Google Chat のスペースの Webhook の URL(スペースの「アプリと統合」→「Webhook を管理」で作ります)。`chat.googleapis.com` の URL だけ使います |
+| `WORKLOG_GOOGLE_CHAT_WEBHOOK_ANY=1` | `GOOGLE_CHAT_WEBHOOK_URL` に Google 以外の URL も許します。テスト用です |
 | `PORT` | 待ち受けポート(`--port` が優先) |
 
 ## Codex 対応
@@ -436,28 +439,28 @@ Notion には `POST /v1/comments` で、ページへのコメントとして投�
 - Linear / Jira / Backlog: この開発環境から接続できないため、実際のサービスでは確認していません。公式の SDK / ドキュメント(`@linear/sdk` の型定義、gitlabhq の `doc/api`、nulab/backlog-js、jira.js)に合わせた偽サーバーとテストでだけ確認しています。実際に使うときは、まず取得の表示から確かめてください。
 - Notion: Notion の API にもこの開発環境から接続できないため、実際のサービスでは確認していません。公式 SDK(`@notionhq/client`、`Notion-Version` 2025-09-03)の型定義に合わせた偽サーバーとテスト(`test/notion.test.js`)でだけ確認しています。取得もコメントの投稿も、実際に使うときはまず取得の表示から確かめてください。
 
-## Slack / Discord / Teams 連携
+## Slack / Discord / Teams / Google Chat 連携
 
-日報・週報を Slack、Discord、Microsoft Teams に送ります。画面からも CLI からも送れます。セッション終了の通知(任意)もあります。送り先は 1 つでも複数でも設定でき、設定が無ければ何も送りません。
+日報・週報を Slack、Discord、Microsoft Teams、Google Chat に送ります。画面からも CLI からも送れます。セッション終了の通知(任意)もあります。送り先は 1 つでも複数でも設定でき、設定が無ければ何も送りません。
 
 ### 共通の動作
 
 - 日報・週報の内容、期間、タイムゾーンの扱いは、どちらの送り先でも同じです(「日報・週報の内容」)。
 - 画面からは、確認ダイアログで送る内容を見てから送ります。プレビューの後に内容が変わったときは、送らずに、もう一度確認するよう求めます。
-- CLI の `report` は、`--slack` / `--discord` / `--teams` を付けると確認なしで送ります。
+- CLI の `report` は、`--slack` / `--discord` / `--teams` / `--google-chat` を付けると確認なしで送ります。
 - セッション終了の通知は、送り先ごとに `notify` を設定します。送ったものは二度送りません。
 - 本文は、書式を整える前に秘匿情報をマスキングします(「秘匿情報」)。
 - Webhook の URL とトークンはサーバー側だけで使い、ブラウザには渡しません。
 
 送り先ごとの違いは次のとおりです。
 
-| | Slack | Discord | Teams |
-| --- | --- | --- | --- |
-| 送り方 | Incoming Webhook か Bot トークン | Webhook | Workflows の Webhook か Incoming Webhook(廃止予定) |
-| 環境変数 | `SLACK_WEBHOOK_URL`、`SLACK_BOT_TOKEN`、`SLACK_CHANNEL` | `DISCORD_WEBHOOK_URL` | `TEAMS_WEBHOOK_URL` |
-| 書式 | blocks(mrkdwn) | embeds(Markdown) | Adaptive Card |
-| 投稿へのリンク | Bot のときだけ | メッセージへのリンクが取れたとき | なし |
-| `config.json` | `slack` | `discord` | `teams` |
+| | Slack | Discord | Teams | Google Chat |
+| --- | --- | --- | --- | --- |
+| 送り方 | Incoming Webhook か Bot トークン | Webhook | Workflows の Webhook か Incoming Webhook(廃止予定) | スペースの Webhook |
+| 環境変数 | `SLACK_WEBHOOK_URL`、`SLACK_BOT_TOKEN`、`SLACK_CHANNEL` | `DISCORD_WEBHOOK_URL` | `TEAMS_WEBHOOK_URL` | `GOOGLE_CHAT_WEBHOOK_URL` |
+| 書式 | blocks(mrkdwn) | embeds(Markdown) | Adaptive Card | テキスト(`*太字*`、`<URL|名前>`) |
+| 投稿へのリンク | Bot のときだけ | メッセージへのリンクが取れたとき | なし | なし |
+| `config.json` | `slack` | `discord` | `teams` | `googlechat` |
 
 ### Slack
 
@@ -576,6 +579,45 @@ Notion には `POST /v1/comments` で、ページへのコメントとして投�
 - TextBlock の Markdown は、太字・リスト・リンクしか使えません。意味を持つ `*` `_` `[` `]` は、タイトルなどの中では全角(`＊` `＿` `［` `］`)に置き換えます。
 - メッセージ全体が 28KB の制限に収まるよう、セッション一覧を後ろから減らし、減らした分は「ほか n セッション」とまとめます。
 
+### Google Chat
+
+#### 送り方
+
+`GOOGLE_CHAT_WEBHOOK_URL` に Webhook の URL を設定します。
+
+- スペースの「アプリと統合」→「Webhook を管理」で作った Webhook の URL(`https://chat.googleapis.com/v1/spaces/{space}/messages?key=...&token=...`)だけを使います。`http://` や、これ以外の URL は使いません。
+- `WORKLOG_GOOGLE_CHAT_WEBHOOK_ANY=1` を設定すると、これ以外の URL も許します。偽サーバーを使うテスト用です。
+- URL の `key` と `token` は認証情報です。サーバー側だけで使い、ブラウザには渡しません。
+- Webhook の応答には `name` と `thread.name` しか入らず、投稿へのリンクは返らないので、画面に「開く」は出ません。
+- リダイレクトは追わず、1 回のリクエストは 10 秒でタイムアウトします。429 が返ったときは、再試行までの秒数を表示します。API のエラーは、`error.message` を表示します。
+
+画面に渡すのは、送り先が使えるか、送り先の表示名(「Webhook」)、コストを含めるか、通知の設定だけです(`GET /api/config` の `googlechat`)。Webhook の URL はブラウザには渡しません。
+
+#### 設定
+
+`~/.work-log/config.json` の `googlechat` に書きます(任意)。
+
+```json
+{
+  "googlechat": {
+    "includeCost": false,
+    "maxSessions": 20,
+    "notify": "session_end"
+  }
+}
+```
+
+- `includeCost`: `true` にすると、合計に API 換算コストを載せます。既定は載せません。
+- `maxSessions`: セッション一覧に出す件数です。既定は 20 で、超えた分は「ほか n セッション」とまとめます。
+- `notify`: `"session_end"` にすると、セッション終了を通知します(後述)。
+
+#### 送る本文
+
+- テキストメッセージ(`{ "text": ... }`)で送ります。見出し(期間と合計)、プロジェクト別、タスク、セッションの順に並べます。
+- 書式は、`*太字*` の見出し、`• ` のリスト、`<URL|名前>` のリンクです。
+- Chat には記号を逃がす書き方がないので、タイトルなどの中の `*` `_` `~` `` ` `` `<` `>` `|` は全角に置き換えます。`<users/all>` のようなメンションとして解釈されるのも、これで防ぎます。
+- メッセージ全体は 32,000 バイトまでです(Chat API の Message の説明)。収まるよう、セッション一覧を後ろから減らし、減らした分は「ほか n セッション」とまとめます。
+
 ### 日報・週報の内容
 
 - 見出し: 日報は日付、週報は月曜から日曜までの期間です。
@@ -593,7 +635,7 @@ Notion には `POST /v1/comments` で、ページへのコメントとして投�
 
 ### 画面から送る
 
-何も選んでいないときの右側(週の集計)に、設定した送り先ごとに、「今日の日報…」と「この週の週報…」のボタンが並びます。週報は、表示している週が対象です。Teams のボタンは「Teams(Workflows)に送る」で、確認ダイアログにも同じ表示が出ます。
+何も選んでいないときの右側(週の集計)に、設定した送り先ごとに、「今日の日報…」と「この週の週報…」のボタンが並びます。週報は、表示している週が対象です。Teams のボタンは「Teams(Workflows)に送る」、Google Chat のボタンは「Google Chat(Webhook)に送る」で、確認ダイアログにも同じ表示が出ます。
 
 1. ボタンを押すと、確認ダイアログに、送る内容が読みやすい形で表示されます。
 2. 「投稿する」を押したときだけ送ります。
@@ -605,12 +647,12 @@ Notion には `POST /v1/comments` で、ページへのコメントとして投�
 ### CLI から送る
 
 ```sh
-node src/cli.js report [--week] [--date YYYY-MM-DD] [--tz <IANA名>] [--slack] [--discord] [--teams]
+node src/cli.js report [--week] [--date YYYY-MM-DD] [--tz <IANA名>] [--slack] [--discord] [--teams] [--google-chat]
 ```
 
 - 既定は今日の日報です。`--week` で、`--date`(省略すると今日)を含む週の週報にします。
 - 内容はターミナルに表示します。
-- `--slack` / `--discord` / `--teams` を付けると、確認なしで送ります。複数付けると、Slack、Discord、Teams の順に送ります。cron などで定期的に送れます。
+- `--slack` / `--discord` / `--teams` / `--google-chat` を付けると、確認なしで送ります。複数付けると、Slack、Discord、Teams、Google Chat の順に送ります。cron などで定期的に送れます。
 - 失敗したときは、メッセージを表示して exit 1 で終わります。先の送り先で失敗したときは、後の送り先には送りません。
 
 例: 平日の 18 時に日報を送る(パスは環境に合わせてください)。
@@ -619,20 +661,21 @@ node src/cli.js report [--week] [--date YYYY-MM-DD] [--tz <IANA名>] [--slack] [
 0 18 * * 1-5  cd <リポジトリのパス> && SLACK_WEBHOOK_URL=<Webhook の URL> node src/cli.js report --slack
 0 18 * * 1-5  cd <リポジトリのパス> && DISCORD_WEBHOOK_URL=<Webhook の URL> node src/cli.js report --discord
 0 18 * * 1-5  cd <リポジトリのパス> && TEAMS_WEBHOOK_URL=<Webhook の URL> node src/cli.js report --teams
+0 18 * * 1-5  cd <リポジトリのパス> && GOOGLE_CHAT_WEBHOOK_URL=<Webhook の URL> node src/cli.js report --google-chat
 ```
 
 ### API
 
-- `GET /api/report`: プレビューです。`target`(`slack` / `discord` / `teams`)、`period`(`day` / `week`)、`date`(`YYYY-MM-DD`)、`tz` を指定します。送る内容(`preview`)、プレーンテキストにしたもの(`previewText`)、内容の `hash`、合計、送り先の状態を返します。
+- `GET /api/report`: プレビューです。`target`(`slack` / `discord` / `teams` / `googlechat`)、`period`(`day` / `week`)、`date`(`YYYY-MM-DD`)、`tz` を指定します。送る内容(`preview`)、プレーンテキストにしたもの(`previewText`)、内容の `hash`、合計、送り先の状態を返します。
 - `POST /api/report`: `{ "target", "period", "date", "tz", "hash" }` を送ると、送信します。`hash` がプレビューのものと違うときは、送らずに 409 を返します。
 - `target` を省略すると `slack` です。
 - `/api/slack/report` は、`target=slack` と同じです(互換のために残しています)。
 
 ### セッション終了の通知
 
-`slack.notify`、`discord.notify`、`teams.notify` が `"session_end"` で、その送り先が使える状態のとき、サーバーの起動中に hooks の `SessionEnd` を受けたセッションを、1 件ずつ送ります。複数設定すれば、すべてに送ります。hooks 連携(`hooks install`)が必要です。
+`slack.notify`、`discord.notify`、`teams.notify`、`googlechat.notify` が `"session_end"` で、その送り先が使える状態のとき、サーバーの起動中に hooks の `SessionEnd` を受けたセッションを、1 件ずつ送ります。複数設定すれば、すべてに送ります。hooks 連携(`hooks install`)が必要です。
 
-- 内容: タイトル、プロジェクト、作業時間、コミット数、Codex の印、紐付いたタスクです。API 換算コストは `includeCost` を設定したときだけ載せます。Discord では、タイトルを embed の見出しにします。Teams では、タイトルを Adaptive Card の見出しにします。
+- 内容: タイトル、プロジェクト、作業時間、コミット数、Codex の印、紐付いたタスクです。API 換算コストは `includeCost` を設定したときだけ載せます。Discord では、タイトルを embed の見出しにします。Teams では、タイトルを Adaptive Card の見出しにします。Google Chat では、タイトルを太字の 1 行目にします。
 - 終了から 2 時間以内のものだけ送ります。サーバーの停止中に終わったセッションを、起動後にまとめて送ることはありません。
 - 同じ終了は、送り先ごとに二度送りません。送った記録は `slack-notified.json` に残します(Slack だけだった頃の記録も、そのまま使います)。送信に失敗したときも、その送り先には同じものを繰り返し送りません(警告をログに出します)。ほかの送り先には影響しません。
 - 本文は秘匿情報をマスキングします。
@@ -643,11 +686,12 @@ node src/cli.js report [--week] [--date YYYY-MM-DD] [--tz <IANA名>] [--slack] [
 
 ### 動作確認
 
-Slack、Discord、Teams の API には、この開発環境から接続できないため、実際のサービスでは確認していません。
+Slack、Discord、Teams、Google Chat の API には、この開発環境から接続できないため、実際のサービスでは確認していません。
 
 - Slack: 公式 SDK(`@slack/web-api`、`@slack/webhook`)の形に合わせた偽サーバーとテスト(`test/slack.test.js`)でだけ確認しています。
 - Discord: discord-api-types の型定義に合わせた偽サーバーとテスト(`test/discord.test.js`)でだけ確認しています。
 - Teams: 偽サーバーとテスト(`test/teams.test.js`)でだけ確認しています。送るデータの形は、MicrosoftDocs/msteams-docs(`connectors-using.md`、`cards-format.md`)に合わせています。
+- Google Chat: 偽サーバーとテスト(`test/googlechat.test.js`)でだけ確認しています。送るデータの形と制限は、Chat API の discovery document(`chat.googleapis.com` の `$discovery`、v1)と `@googleapis/chat` に合わせています。実際のスペースには接続できていません。
 
 実際に使うときは、まず `report` コマンドで本文を確かめ、次にテスト用のチャンネルへ送ってみてください。
 
@@ -677,7 +721,7 @@ Slack、Discord、Teams の API には、この開発環境から接続できな
 - `links.json`: 詳細パネルから手で付け外ししたタスクです。
 - `github.json`: GitHub の issue / PR の取得結果(ETag を含む)です。形式と再確認の間隔は「タスク管理連携」の「課題管理サービス連携」を参照してください。
 - `tracker-<name>.json`: GitLab / Linear / Jira / Backlog / Notion の課題の取得結果です(`tracker-gitlab.json`、`tracker-notion.json` など。GitLab は ETag を含む)。再確認の間隔は GitHub と同じです。
-- `slack-notified.json`: Slack / Discord / Teams の通知の記録です。セッション終了の通知を送ったセッションを、送り先ごとに記録します(新しい 500 件まで)。形式は「Slack / Discord / Teams 連携」の「セッション終了の通知」を参照してください。
+- `slack-notified.json`: Slack / Discord / Teams / Google Chat の通知の記録です。セッション終了の通知を送ったセッションを、送り先ごとに記録します(新しい 500 件まで)。形式は「Slack / Discord / Teams / Google Chat 連携」の「セッション終了の通知」を参照してください。
 
 ## ディレクトリ構成
 
@@ -701,7 +745,8 @@ src/
   slack.js       Slack への送信。Incoming Webhook と Bot トークン(chat.postMessage)に対応
   discord.js     Discord への送信。Webhook に対応(embeds で送る)
   teams.js       Teams への送信。Workflows と Incoming Webhook に対応(Adaptive Card で送る)
-  report.js      日報・週報の集計と、Slack 用・Discord 用・Teams 用・ターミナル用の本文、セッション終了の通知の本文
+  googlechat.js  Google Chat への送信。スペースの Webhook に対応(テキストで送る)
+  report.js      日報・週報の集計と、Slack 用・Discord 用・Teams 用・Google Chat 用・ターミナル用の本文、セッション終了の通知の本文
   filter.js      セッション一覧の絞り込み(期間・プロジェクト・タグ・ツール・タスク・キーワード)
   parser.js      JSONL を 1 セッションの集計レコードに変換
   codex.js       Codex CLI のログ(rollout)を同じ集計レコードに変換。.zst の読み込みも担当
