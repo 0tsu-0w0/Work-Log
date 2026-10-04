@@ -84,10 +84,15 @@ export function parseAiderSession(section, { file = '', cwd = null, inputs = [],
     reply = [];
   };
   let next = 0; // 次に照合する入力履歴の位置
+  // "/ask 質問" などは、コマンドの行に続けて中身がもう一度 "#### 質問" として書かれる(commands.py の _generic_chat_command)
+  let echo = null;
   const flushPrompt = () => {
     if (prompt === null) return;
     const raw = prompt.join('\n').trim();
     prompt = null;
+    const expected = echo;
+    echo = null;
+    if (expected !== null && raw === expected) return;
     // 入力履歴の同じ入力と照合して、この依頼の時刻を得る(続く利用量・コミットの時刻に使う)
     for (let k = next; k < Math.min(inputs.length, next + 5); k++) {
       if (inputs[k].text.trim() !== raw) continue;
@@ -99,24 +104,30 @@ export function parseAiderSession(section, { file = '', cwd = null, inputs = [],
     const cmd = raw.match(/^\/(run|git)\s+([\s\S]+)$/);
     if (cmd) c.commands.push(cmd[1] === 'git' ? `git ${cmd[2]}` : cmd[2]);
     let body = raw;
-    if (CHAT_COMMANDS.test(body)) body = body.replace(CHAT_COMMANDS, '');
+    if (CHAT_COMMANDS.test(body)) echo = body = body.replace(CHAT_COMMANDS, '').trim();
     else if (body.startsWith('/') || body === '<blank>') return;
     if (body) c.prompts.push(body);
   };
 
+  let inTool = false; // ツールの出力の途中か。複数行の出力は1行目にだけ '> ' が付き、空行まで続く
   for (const raw of section.text.split('\n')) {
     const line = raw.replace(/ {2}$/, '');
     if (raw.startsWith('#### ')) {
       if (prompt === null) flushReply();
       (prompt ||= []).push(line.slice(5));
+      inTool = false;
       continue;
     }
     flushPrompt();
-    // ツールの出力は '> ' で始まる行(SEARCH/REPLACE ブロックの '>>>>>>> REPLACE' は応答の一部)
+    // ツールの出力は '> ' で始まる行(SEARCH/REPLACE ブロックの '>>>>>>> REPLACE' は応答の一部)。
+    // AI の応答は必ず空行のあとに始まるので、'> ' の行に空行を挟まず続く行はツールの出力の続き
     if (!/^>( |$)/.test(raw)) {
+      if (inTool && raw.trim()) continue;
+      inTool = false;
       reply.push(raw);
       continue;
     }
+    inTool = true;
     flushReply();
     const out = line.replace(/^>\s?/, '');
     let m;
