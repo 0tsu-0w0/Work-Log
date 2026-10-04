@@ -1,0 +1,9 @@
+id: c0p1107a-5e55-4a1b-9c2d-3e4f5a6b7c8d
+cwd: /home/dev/shop
+git_root: /home/dev/shop
+repository: dev/shop
+host_type: github
+branch: feat/cart
+name: "カートの合計バグ修正"
+created_at: 2026-10-04T02:00:00.000Z
+updated_at: 2026-10-04T03:00:31.000Z

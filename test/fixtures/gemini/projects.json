@@ -1,0 +1,6 @@
+{
+  "projects": {
+    "/home/dev/webapp": "webapp",
+    "/home/dev/legacy-api": "legacy-api"
+  }
+}

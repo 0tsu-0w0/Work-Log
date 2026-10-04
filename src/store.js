@@ -202,11 +202,13 @@ export class Store {
     const found = [...(await this.listLogFiles()), ...(await this.listSourceFiles())];
     const seen = new Set();
     let changed = 0;
-    for (const { file, projectDir, parentId, tool } of found) {
+    for (const entry of found) {
+      const { file, projectDir, parentId, tool } = entry;
       seen.add(file);
       let st;
       try {
-        st = await stat(file);
+        // 取り込み元によっては file が仮想のキー(DB の中のチャットなど)で、更新時刻とサイズを自分で持つ
+        st = Number.isFinite(entry.mtimeMs) ? { mtimeMs: entry.mtimeMs, size: entry.size ?? 0 } : await stat(entry.statFile || file);
       } catch {
         continue;
       }
@@ -214,7 +216,7 @@ export class Store {
       if (cached && cached.mtimeMs === st.mtimeMs && cached.size === st.size) continue;
       try {
         const src = tool && tool !== 'claude' ? SOURCES.find((s) => s.name === tool) : null;
-        const session = src ? await src.parse(file) : await parseSessionFile(file, projectDir);
+        const session = src ? await src.parse(file, entry) : await parseSessionFile(file, projectDir);
         if (src) session.tool = src.name;
         session.tool ||= 'claude';
         if (parentId) session.parentId = parentId;

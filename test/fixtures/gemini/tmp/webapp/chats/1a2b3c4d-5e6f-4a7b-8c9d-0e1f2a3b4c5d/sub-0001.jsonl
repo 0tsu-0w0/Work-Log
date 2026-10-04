@@ -1,0 +1,3 @@
+{"sessionId":"sub-0001","projectHash":"fd20db9cf4309815aebd3729173edf8a78abb152c57b1de8cb602a3c8b959627","startTime":"2026-10-04T01:00:30.000Z","lastUpdated":"2026-10-04T01:00:40.000Z","kind":"subagent","directories":["/home/dev/webapp"]}
+{"id":"s1","timestamp":"2026-10-04T01:00:31.000Z","type":"user","content":[{"text":"Find validation code"}]}
+{"id":"s2","timestamp":"2026-10-04T01:00:40.000Z","type":"gemini","content":"Found in src/login.ts","model":"gemini-2.5-flash","tokens":{"input":3000,"output":50,"cached":0,"thoughts":0,"tool":0,"total":3050}}

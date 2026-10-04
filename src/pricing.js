@@ -36,6 +36,7 @@ const MODELS = [
 // 長いIDから順に照合するので "claude-opus-4" が "claude-opus-4-5" を横取りしない。
 const BY_LENGTH = [...MODELS].sort((a, b) => b[0].length - a[0].length);
 const OPENAI_RE = /^(gpt-|o\d|codex-)/;
+const GEMINI_RE = /^(models\/)?gemini-/; // Gemini の単価は組み込みに持たない(利用者の単価表で計算できる)
 let overrides = [];
 
 // 利用者が用意した単価表(~/.work-log/pricing.json)。Codex(OpenAI)のモデルや、価格改定への追従に使う。
@@ -47,7 +48,7 @@ export function setPricingOverrides(map = {}) {
     .map(([prefix, v]) => [
       prefix.toLowerCase(),
       {
-        family: v.family || (OPENAI_RE.test(prefix.toLowerCase()) ? 'OpenAI' : priceFor(prefix)?.family || 'その他'),
+        family: v.family || (OPENAI_RE.test(prefix.toLowerCase()) ? 'OpenAI' : GEMINI_RE.test(prefix.toLowerCase()) ? 'Gemini' : priceFor(prefix)?.family || 'その他'),
         input: v.input,
         output: v.output,
         cacheRead: Number.isFinite(v.cacheRead) ? v.cacheRead : v.input * 0.1,
@@ -76,7 +77,9 @@ export function priceFor(model) {
 export function modelFamily(model) {
   const p = priceFor(model);
   if (p) return p.family;
-  return typeof model === 'string' && OPENAI_RE.test(model.toLowerCase()) ? 'OpenAI' : 'その他';
+  if (typeof model !== 'string') return 'その他';
+  const id = model.toLowerCase();
+  return OPENAI_RE.test(id) ? 'OpenAI' : GEMINI_RE.test(id) ? 'Gemini' : 'その他';
 }
 
 // tokens: [input, output, cacheRead, cacheWrite5m, cacheWrite1h, webSearches]

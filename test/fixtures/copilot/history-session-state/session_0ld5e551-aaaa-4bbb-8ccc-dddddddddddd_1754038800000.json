@@ -1,0 +1,71 @@
+{
+  "sessionId": "0ld5e551-aaaa-4bbb-8ccc-dddddddddddd",
+  "startTime": "2025-08-01T09:00:00.000Z",
+  "selectedModel": "claude-sonnet-4",
+  "chatMessages": [
+    {
+      "role": "user",
+      "content": "READMEを更新して"
+    }
+  ],
+  "timeline": [
+    {
+      "id": "t1",
+      "timestamp": "2025-08-01T09:00:10.000Z",
+      "type": "user",
+      "text": "READMEを更新して"
+    },
+    {
+      "id": "t2",
+      "timestamp": "2025-08-01T09:00:20.000Z",
+      "type": "tool_call_requested",
+      "callId": "k1",
+      "name": "str_replace_editor",
+      "intentionSummary": "edit README",
+      "arguments": {
+        "command": "str_replace",
+        "path": "/home/dev/docs/README.md",
+        "old_str": "a",
+        "new_str": "b"
+      }
+    },
+    {
+      "id": "t3",
+      "timestamp": "2025-08-01T09:00:21.000Z",
+      "type": "tool_call_completed",
+      "callId": "k1",
+      "name": "str_replace_editor",
+      "intentionSummary": "edit README",
+      "result": {
+        "type": "success",
+        "log": "ok"
+      },
+      "arguments": {
+        "command": "str_replace",
+        "path": "/home/dev/docs/README.md"
+      }
+    },
+    {
+      "id": "t4",
+      "timestamp": "2025-08-01T09:00:30.000Z",
+      "type": "tool_call_completed",
+      "callId": "k2",
+      "name": "bash",
+      "intentionSummary": null,
+      "result": {
+        "type": "success",
+        "log": "[main 1234abc] docs: update README\n 1 file changed"
+      },
+      "arguments": {
+        "command": "git commit -am \"docs: update README\"",
+        "description": "commit"
+      }
+    },
+    {
+      "id": "t5",
+      "timestamp": "2025-08-01T09:00:40.000Z",
+      "type": "copilot",
+      "text": "README を更新しました。"
+    }
+  ]
+}

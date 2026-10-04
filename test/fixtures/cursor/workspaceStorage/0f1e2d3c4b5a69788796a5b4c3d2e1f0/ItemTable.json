@@ -1,0 +1,18 @@
+{
+  "composer.composerData": {
+    "allComposers": [
+      {
+        "composerId": "a1b2c3d4-0000-4000-8000-00000000000a",
+        "name": "レスポンシブなヘッダー",
+        "createdAt": 1791090000000,
+        "unifiedMode": "agent"
+      },
+      {
+        "composerId": "c1b2c3d4-0000-4000-8000-00000000000c"
+      }
+    ],
+    "selectedComposerIds": [
+      "a1b2c3d4-0000-4000-8000-00000000000a"
+    ]
+  }
+}
