@@ -5,6 +5,7 @@
 //     1行目がメタ情報 {sessionId, projectHash, startTime, lastUpdated, kind}、以降はメッセージ
 //     {id, timestamp, type: user|gemini|info|error|warning, content, toolCalls, tokens, model}。
 //     同じ id のメッセージは更新のたびに丸ごと追記される(後の行が正)。{"$set": {...}} はメタ情報の更新、{"$rewindTo": id} は巻き戻し
+//     --resume で再開すると元のファイルに追記され、同じセッションIDで中身の無いファイルが別にできる(0.62.0 の実際のログで確認)
 //   古い版は session-*.json に ConversationRecord({..., messages: [...]})を1つの JSON で書く
 //   サブエージェントは chats/<親セッションID>/<ID>.jsonl
 //   <プロジェクトID> は新しい版ではフォルダ名から作った短い名前(projects.json と .project_root で実際のパスと対応付く)、

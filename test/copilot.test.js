@@ -88,3 +88,42 @@ test('既定の場所は COPILOT_HOME と WORKLOG_COPILOT_DIR で変えられる
   assert.equal(defaultSourceDirs({ COPILOT_HOME: '/c' }, '/home/me').copilot, '/c');
   assert.equal(defaultSourceDirs({ WORKLOG_COPILOT_DIR: '/w', COPILOT_HOME: '/c' }, '/home/me').copilot, '/w');
 });
+
+// 実際の Copilot CLI 1.0.91 が書いたログ。GitHub にはログインせず、BYOK(COPILOT_PROVIDER_BASE_URL)で手元の偽の
+// OpenAI 互換サーバーにつないだ。一時フォルダのパスは /tmp/work-log-real に置き換え、システムプロンプトは省いた
+//   a60bc147: README を作ってコミット → 2分半後に --resume で再開して git log
+//   e15094b3: src/ が無くて create・edit が失敗し、コミット(exit 1)と push(exit 128)も失敗
+const REAL = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'copilot-real');
+const REAL_ROOT = '/tmp/work-log-real/crepo';
+
+test('実際の Copilot CLI のログ: 依頼・再開・失敗したコマンド・累計の利用量', async () => {
+  const files = await listCopilot(REAL);
+  assert.equal(files.length, 2); // .session-operation-locks は数えない
+
+  const ok = await parseCopilotFile(path.join(REAL, 'session-state', 'a60bc147-7ad8-4e95-804b-79d788f61111', 'events.jsonl'));
+  assert.equal(ok.cwd, REAL_ROOT);
+  assert.equal(ok.gitBranch, 'main');
+  assert.equal(ok.title, 'README を作ってコミットして');
+  // user.message には毎回 parentAgentTaskId(計測用)が付くが、ユーザーの依頼として数える
+  assert.deepEqual(ok.prompts, ['README を作ってコミットして', '履歴を確認して']);
+  assert.equal(ok.assistantMessages, 5);
+  assert.deepEqual(ok.models, ['gpt-4.1']);
+  assert.deepEqual(ok.changedFiles, ['README.md']);
+  assert.deepEqual(ok.toolCalls, { create: 1, bash: 2 });
+  assert.deepEqual(ok.commitList.map((c) => [c.hash, c.branch, c.subject]), [['c97c6ba', 'main', 'docs: README を追加']]);
+  assert.equal(ok.start, '2026-10-04T14:30:37.946Z');
+  assert.equal(ok.end, '2026-10-04T14:33:12.290Z');
+  // 2回目の shutdown の modelMetrics は1回目を含む累計(input 12033 → 50055)。差を取って二重に数えない
+  // 偽サーバーの値: prompt 2011/4011/6011 + 18011/20011、cached 200/400/600 + 1800/2000、completion 31〜33 + 39・40
+  assert.deepEqual(ok.usage, { '2026-10-04T14|gpt-4.1||': [50055 - 5000, 175, 5000, 0, 0, 0] });
+
+  const failed = await parseCopilotFile(path.join(REAL, 'session-state', 'e15094b3-1a2a-4780-8503-38c5483724cd', 'events.jsonl'));
+  assert.deepEqual(failed.prompts, ['src/app.js を追加してコミットして']);
+  assert.deepEqual(failed.changedFiles, []); // create・edit は success: false
+  assert.deepEqual(failed.toolCalls, { create: 1, edit: 1, bash: 2 });
+  // bash は success: true のまま "<shellId: 0 completed with exit code 1>" と shellExecution.exitCode で失敗を表す
+  assert.equal(failed.commitAttempts, 1);
+  assert.equal(failed.commits, 0);
+  assert.equal(failed.pushes, 0);
+  assert.deepEqual(failed.usage, { '2026-10-04T14|gpt-4.1||': [60055 - 6000, 180, 6000, 0, 0, 0] });
+});

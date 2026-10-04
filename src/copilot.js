@@ -4,7 +4,11 @@
 //     events.jsonl は1行1イベント {id, timestamp, parentId, type, data}。
 //     session.start / session.resume(data.context に cwd・branch・repository)、user.message、assistant.message
 //     (content・model・toolRequests・outputTokens)、tool.execution_start / tool.execution_complete、
-//     session.shutdown(その起動中のモデルごとの利用量 modelMetrics)など。
+//     session.shutdown(モデルごとの利用量 modelMetrics)など。
+//     modelMetrics と codeChanges は再開(session.resume)前の起動の分も含む累計(1.0.91 の実際のログで確認)。
+//     user.message の parentAgentTaskId は計測用の ID で、ユーザーが打った依頼にも付く。
+//     シェルの結果は result.content の末尾が "<shellId: 0 completed with exit code 1>" で、shellExecution.exitCode にも入る
+//     (success は終了コードが 0 以外でも true)
 //     assistant.usage(応答ごとの利用量)や title_changed は ephemeral(ファイルに残らない)なので使えない
 //     workspace.yaml は id / cwd / git_root / repository / branch / name / summary / created_at / updated_at
 //   0.0.3xx までの版は history-session-state/session_<ID>_<開始ミリ秒>.json に
@@ -15,6 +19,8 @@ import { addTime, addUsage, countTool, createCollector, finish, onShell, onShell
 
 const SHELL_TOOLS = new Set(['bash', 'powershell', 'shell']);
 const EDIT_TOOLS = new Set(['edit', 'create', 'str_replace', 'str_replace_editor', 'write', 'apply_patch']);
+// シェルの結果の末尾: 古い版は "<exited with exit code 1>"、1.0.x は "<shellId: 0 completed with exit code 1>"
+const SHELL_FAILED = /<(?:exited|(?:detached command with )?shellId: [^\r\n>]+ completed) with exit code (?!0>)-?\d+>/;
 
 // "claude-sonnet-4.5" のような Copilot の表記を、単価表の "claude-sonnet-4-5" にそろえる
 export function normalizeModel(model) {
@@ -71,6 +77,7 @@ export function parseCopilotEvents(text, { file = '', workspace = {} } = {}) {
   // 起動(session.start / resume)ごとに、shutdown の利用量か、無ければ応答の outputTokens を使う
   let run = { shutdown: false, output: {} };
   const runs = [run];
+  const lastMetrics = new Map(); // モデル名 -> 直前の shutdown の累計 [input, output, cacheRead, cacheWrite]
 
   const ctx = (x) => {
     if (!x || typeof x !== 'object') return;
@@ -115,7 +122,9 @@ export function parseCopilotEvents(text, { file = '', workspace = {} } = {}) {
       case 'user.message': {
         addTime(c, ts);
         const body = typeof d.content === 'string' ? d.content.trim() : '';
-        if (body && !d.isAutopilotContinuation && !d.parentAgentTaskId) c.prompts.push(body);
+        // source が "skill-…"(隠れたスキルの差し込み)・"agent-…"(エージェント間の依頼)のものはユーザーの依頼ではない
+        const injected = typeof d.source === 'string' && /^(skill|agent)-/.test(d.source);
+        if (body && !d.isAutopilotContinuation && !injected) c.prompts.push(body);
         break;
       }
       case 'assistant.message': {
@@ -137,7 +146,8 @@ export function parseCopilotEvents(text, { file = '', workspace = {} } = {}) {
       case 'tool.execution_complete': {
         addTime(c, ts);
         const t = tools.get(d.toolCallId) || {};
-        t.done = { success: d.success !== false, text: [d.result?.content, d.result?.detailedContent, d.error?.message].filter((x) => typeof x === 'string').join('\n'), ts };
+        const exitCode = d.shellExecution?.exitCode;
+        t.done = { success: d.success !== false && !(typeof exitCode === 'number' && exitCode !== 0), text: [d.result?.content, d.result?.detailedContent, d.error?.message].filter((x) => typeof x === 'string').join('\n'), ts };
         let files = [];
         try {
           files = JSON.parse(d.toolTelemetry?.restrictedProperties?.filePaths || '[]');
@@ -155,8 +165,13 @@ export function parseCopilotEvents(text, { file = '', workspace = {} } = {}) {
           const u = metric?.usage || {};
           const m = normalizeModel(name);
           if (m) c.models.add(m);
+          // 累計なので、前の shutdown の値との差をこの起動の分にする。値が減っていれば(累計しない版)そのまま使う
+          const cur = [u.inputTokens || 0, u.outputTokens || 0, u.cacheReadTokens || 0, u.cacheWriteTokens || 0];
+          const prev = lastMetrics.get(name);
+          const delta = prev && cur.every((v, i) => v >= prev[i]) ? cur.map((v, i) => v - prev[i]) : cur;
+          lastMetrics.set(name, cur);
           // inputTokens はキャッシュ読み込みを含む(OpenAI 形式)とみなして差し引く。出力は推論トークンを含む
-          addUsage(c, ts, m, { input: (u.inputTokens || 0) - (u.cacheReadTokens || 0), output: u.outputTokens || 0, cacheRead: u.cacheReadTokens || 0, cacheWrite: u.cacheWriteTokens || 0 });
+          addUsage(c, ts, m, { input: delta[0] - delta[2], output: delta[1], cacheRead: delta[2], cacheWrite: delta[3] });
         }
         for (const f of d.codeChanges?.filesModified || []) if (typeof f === 'string') c.changedFiles.add(f);
         break;
@@ -187,7 +202,7 @@ export function parseCopilotEvents(text, { file = '', workspace = {} } = {}) {
     }
     if (SHELL_TOOLS.has(t.name)) {
       onShell(c, callId, args.command);
-      if (t.done) onShellResult(c, callId, t.done.text, !t.done.success || /<exited with exit code [1-9]\d*>/.test(t.done.text), t.done.ts || null);
+      if (t.done) onShellResult(c, callId, t.done.text, !t.done.success || SHELL_FAILED.test(t.done.text), t.done.ts || null);
     }
   }
 
@@ -230,7 +245,7 @@ export function parseCopilotLegacy(json, { file = '' } = {}) {
     if (EDIT_TOOLS.has(t.name) && t.args?.command !== 'view' && typeof t.args?.path === 'string' && (!t.result || t.result.ok)) c.changedFiles.add(t.args.path);
     if (SHELL_TOOLS.has(t.name)) {
       onShell(c, callId, t.args?.command);
-      if (t.result) onShellResult(c, callId, t.result.log, !t.result.ok || /<exited with exit code [1-9]\d*>/.test(t.result.log), t.result.ts || null);
+      if (t.result) onShellResult(c, callId, t.result.log, !t.result.ok || SHELL_FAILED.test(t.result.log), t.result.ts || null);
     }
   }
   if (!c.timestamps.length) addTime(c, json?.startTime);
@@ -250,7 +265,8 @@ export async function listCopilot(dir) {
   const state = path.join(dir, 'session-state');
   for (const e of await readdirSafe(state)) {
     // 旧形式の平らな <ID>.jsonl は Copilot CLI 自身も読まない(移行済み)ので扱わない
-    if (e.isDirectory()) out.push({ file: path.join(state, e.name, 'events.jsonl') });
+    // .session-operation-locks などの管理用フォルダは除く
+    if (e.isDirectory() && !e.name.startsWith('.')) out.push({ file: path.join(state, e.name, 'events.jsonl') });
   }
   const legacy = path.join(dir, 'history-session-state');
   for (const e of await readdirSafe(legacy)) {

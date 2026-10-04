@@ -106,3 +106,54 @@ test('既定の場所は GEMINI_CLI_HOME と WORKLOG_GEMINI_DIR で変えられ�
   assert.equal(defaultSourceDirs({ GEMINI_CLI_HOME: '/x' }, '/home/me').gemini, '/x/.gemini');
   assert.equal(defaultSourceDirs({ WORKLOG_GEMINI_DIR: '/y' }, '/home/me').gemini, '/y');
 });
+
+// 実際の Gemini CLI 0.62.0 が書いたログ(API は手元の偽サーバー。一時フォルダのパスだけ /tmp/work-log-real に置き換えた)
+//   1回目: README を作ってコミット / 2回目: src/app.js を作って直してコミット、push は失敗 / 3回目: 2回目を --resume latest で再開
+//   再開すると元のファイルに追記され、同じセッションIDで中身の無いファイル(14-32)が別にできる
+const REAL = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'gemini-real');
+const REAL_ROOT = '/tmp/work-log-real/demo-repo';
+
+test('実際の Gemini CLI のログ: 依頼・ツール・コミット・利用量', async (t) => {
+  const files = await listGemini(REAL);
+  assert.equal(files.length, 3);
+  const byName = Object.fromEntries(await Promise.all(files.map(async (f) => [path.basename(f.file), await parseGeminiFile(f.file, f)])));
+
+  const first = byName['session-2026-10-04T14-29-b80a2b2a.jsonl'];
+  assert.equal(first.id, 'b80a2b2a-6c2b-4e5e-8131-b41898b3e273');
+  assert.equal(first.cwd, REAL_ROOT);
+  assert.equal(first.project, 'demo-repo');
+  assert.deepEqual(first.prompts, ['README を作ってコミットして']); // <session_context> は依頼にしない
+  assert.equal(first.assistantMessages, 3);
+  assert.deepEqual(first.models, ['gemini-3.8-flash']);
+  assert.deepEqual(first.changedFiles, ['README.md']);
+  assert.deepEqual(first.toolCalls, { write_file: 1, run_shell_command: 1 });
+  // 結果は "<untrusted_context>\nOutput: [main bf95188] …" の形
+  assert.deepEqual(first.commitList.map((c) => [c.hash, c.branch, c.subject]), [['bf95188', 'main', 'docs: README を追加']]);
+  assert.equal(first.start, '2026-10-04T14:29:56.515Z');
+  assert.equal(first.end, '2026-10-04T14:29:56.828Z');
+  // 偽サーバーが返した usageMetadata: prompt 1007/2007/3007(うちキャッシュ 100/200/300)、candidates 21/22/23、thoughts 15/0/0
+  assert.deepEqual(first.usage, { '2026-10-04T14|gemini-3.8-flash||': [6021 - 600, 66 + 15, 600, 0, 0, 0] });
+
+  const resumed = byName['session-2026-10-04T14-31-574bbbd5.jsonl'];
+  assert.equal(resumed.id, '574bbbd5-2986-4a3f-8f94-396a10f935ab');
+  assert.equal(resumed.cwd, REAL_ROOT);
+  assert.deepEqual(resumed.prompts, ['src/app.js を追加してコミットして', '履歴を確認して']);
+  assert.deepEqual(resumed.changedFiles, ['src/app.js']);
+  assert.deepEqual(resumed.toolCalls, { write_file: 1, replace: 1, run_shell_command: 3 });
+  assert.deepEqual(resumed.commitList.map((c) => [c.hash, c.subject]), [['3a02037', 'feat: app.js を追加']]);
+  assert.equal(resumed.pushes, 0); // "Exit Code: 128" の push は数えない
+  assert.equal(resumed.start, '2026-10-04T14:31:15.452Z');
+  assert.equal(resumed.end, '2026-10-04T14:32:34.974Z'); // 再開後の分も同じファイルに入る
+  // 2回目 prompt 4007〜8007(キャッシュ 400〜800)、再開後 9007・10007(キャッシュ 900・1000)
+  assert.deepEqual(resumed.usage, { '2026-10-04T14|gemini-3.8-flash||': [30035 - 3000 + 19014 - 1900, 130 + 59, 4900, 0, 0, 0] });
+
+  // 再開時にできる中身の無いファイルは、メッセージの無いセッションになる
+  assert.equal(byName['session-2026-10-04T14-32-574bbbd5.jsonl'].messageCount, 0);
+
+  const root = await mkdtemp(path.join(os.tmpdir(), 'work-log-gemini-real-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, 'cache'), { recursive: true });
+  const store = new Store({ projectsDir: path.join(root, 'none'), cacheDir: path.join(root, 'cache'), sourceDirs: { gemini: REAL } });
+  await store.scan();
+  assert.deepEqual(store.sessions().map((s) => s.id).sort(), ['574bbbd5-2986-4a3f-8f94-396a10f935ab', 'b80a2b2a-6c2b-4e5e-8131-b41898b3e273']);
+});
