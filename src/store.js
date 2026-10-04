@@ -404,7 +404,7 @@ export class Store {
     return { name, dest: this.destinations[name], fmt: DEST_BY_NAME[name] };
   }
 
-  // 日報・週報。params: { target: 'slack' | 'discord' | 'teams' | 'googlechat', period: 'day' | 'week', date: 'YYYY-MM-DD', tz }
+  // 日報・週報。params: { target: 送り先の名前(destinations.js), period: 'day' | 'week', date: 'YYYY-MM-DD', tz }
   async report({ target = 'slack', period = 'day', date, tz, waitMs = 1500 } = {}) {
     const { name, dest, fmt } = this.destination(target);
     const timeZone = validTimeZone(tz);
