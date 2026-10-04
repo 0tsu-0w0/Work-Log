@@ -29,6 +29,7 @@ Claude Code の作業履歴を自動で収集・可視化し、「いつ何を�
 | Git 連携(コミットとセッションの紐付け) | 実装済み | 詳細パネルでリポジトリを読み、コミットを紐付ける(Claude / 同時間帯)。コミット数は成功した `git commit` のみ集計 |
 | タスク管理連携(タスクIDへのリンク) | 実装済み | ログ(依頼文・ブランチ名・コミットの件名)からIDを検出し、手動の付け外しもできる。タスクビューで集計する。GitHub / GitLab / Linear / Jira / Backlog / Notion は API 連携も実装済み(任意。タイトル・状態・ラベル・担当者の取得、確認後の作業記録コメント)。Notion はページURLを検出し、データベースの ID プロパティ(`TASK-12` など)も扱う。`ABC-123` 形式のIDは、URL のホスト、`tasks.<サービス>.keys`、設定済みのサービスが1つだけ、の順で振り分ける。GitLab は実際の公開 API で確認済み。Linear / Jira / Backlog / Notion は実際の API で未確認 |
 | Codex など他ツールのログ対応 | 実装済み | OpenAI Codex CLI に対応(`~/.codex/sessions/` と `archived_sessions/`、`.jsonl.zst` は Node.js 22.15 以降)。ツールの絞り込みあり。hooks 連携は Claude Code のみ。他のツールは未対応 |
+| Slack 連携(日報・週報、セッション終了の通知) | 実装済み(実 API 未確認) | 画面(週の集計のボタン、確認ダイアログ)と `report` コマンドから、日報・週報を Slack に送る。送り先は Incoming Webhook か Bot トークン + チャンネル。`slack.notify` が `session_end` なら、hooks の SessionEnd を受けたセッションを通知する。Slack の API は開発環境から接続できず、公式 SDK に合わせた偽サーバーとテストでだけ確認している |
 | 利用量・コストのグラフ | 実装済み | ヘッダーの「カレンダー / コスト」で切替。週/月の日別積み上げ棒(モデル系統別)、KPI、モデル別・プロジェクト別の表、コストの大きいセッション。詳細パネルにセッションのコストとトークン数。API 換算額で、定額プランの請求額ではない |
 
 ## 非機能要件
@@ -62,4 +63,9 @@ Claude Code の作業履歴を自動で収集・可視化し、「いつ何を�
 - 課題への書き込みは作業記録のコメントだけ。投稿する本文を確認ダイアログでそのまま見せ、「投稿する」を押したときだけ投稿する(プレビュー後に内容が変わったら投稿しない)。書式は、GitHub / GitLab / Linear が Markdown、Jira が Wiki 記法、Backlog と Notion が(記法に依らず崩れない)プレーンテキスト。
 - Notion は、ページURL(`notion.so` / `*.notion.site`)の検出と、データベースの ID プロパティ(`unique_id`)の値としてのキー形式の両方を扱う。状態は `status` のグループ(To-do / In progress / Complete)で分類し、名前に「中止」「見送り」「cancel」などを含めば中止扱い。コメントは `POST /v1/comments` で、`rich_text` を 2000 文字ずつに分けて投稿する。
 - GitLab は実際の公開 API で issue / MR / 見つからない / ETag の再確認まで確認した。Linear / Jira / Backlog / Notion は開発環境から接続できず、公式の SDK / ドキュメントに合わせた偽サーバーとテストでだけ確認している(実 API 未確認。Notion は `@notionhq/client` の型定義、Notion-Version 2025-09-03)。
+- Slack 連携: 送り先は `SLACK_WEBHOOK_URL`(https のみ)か、`SLACK_BOT_TOKEN` + チャンネル(`slack.channel` / `SLACK_CHANNEL`)。両方あれば投稿のリンクが取れる Bot を優先する。Webhook の URL とトークンはサーバー側だけで使い、ブラウザには送り先の種類とチャンネル名だけを渡す。
+- 日報・週報は、作業時間を期間に入る部分だけ、コミットを時刻が期間内のものだけ数える。タイムゾーンは画面ではブラウザ、CLI では `--tz` か `TZ`(夏時間に対応)。本文は秘匿情報をマスキングし、Slack の記法の `&` `<` `>` を逃がし、1 セクション 3000 文字以内に分ける。コストは `slack.includeCost` が `true` のときだけ載せる。
+- 画面からの送信は、確認ダイアログで本文を見せ、「投稿する」を押したときだけ送る(プレビュー後に内容が変わったら送らない)。CLI の `report --slack` は cron 用に確認なしで送る。
+- セッション終了の通知は、`slack.notify` が `session_end` のときだけ。終了から 2 時間以内のものを 1 件ずつ送り、送った記録を `slack-notified.json` に残して二度送らない。
+- Slack の API は開発環境から接続できず、公式 SDK(`@slack/web-api`、`@slack/webhook`)の形に合わせた偽サーバーとテスト(`test/slack.test.js`)でだけ確認している(実 API 未確認)。
 - セキュリティ: Host が 127.0.0.1 / localhost 以外の要求は断る(DNS リバインディング対策)。POST は自分以外の Origin からの要求を断る(CSRF 対策)。フックからの通知は Origin を付けないので通る。

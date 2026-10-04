@@ -8,10 +8,11 @@ Claude Code の作業履歴を `~/.claude/projects/` 配下の JSONL から自�
 
 - 依存パッケージなし(Node.js 20 以上)
 - `127.0.0.1` のみで待ち受け。Host が `127.0.0.1` / `localhost` 以外の要求は断ります(DNS リバインディング対策)。書き込み系(POST)は、自分以外の Origin からの要求を断ります(他サイトからの CSRF 対策)。hooks からの通知は Origin を付けないので通ります
-- ログは外部に送信しません。LLM 要約だけはオプトインで、送信前に秘匿情報をマスキングします。課題管理サービス(GitHub / GitLab / Linear / Jira / Backlog / Notion)の課題の情報取得とコメント投稿も任意で、取得はタスクIDの検出結果をもとに各サービスの API へ問い合わせるだけです(「課題管理サービス連携」を参照)
+- ログは外部に送信しません。LLM 要約だけはオプトインで、送信前に秘匿情報をマスキングします。課題管理サービス(GitHub / GitLab / Linear / Jira / Backlog / Notion)の課題の情報取得とコメント投稿も任意で、取得はタスクIDの検出結果をもとに各サービスの API へ問い合わせるだけです(「課題管理サービス連携」を参照)。Slack への日報・週報の送信も任意で、送るのは利用者が操作したとき(または通知を設定したとき)だけです(「Slack 連携」を参照)
 - Claude Code と Codex CLI の両方のログを、同じカレンダーとコストの画面で扱います(ツールで絞り込めます)
 - ログの変更をファイル監視で検知し、画面を自動更新します
 - Claude Code の hooks に登録すると、作業中・入力待ちの状態をリアルタイムに表示します(任意)
+- 日報・週報を Slack に送れます。セッション終了の通知も任意で設定できます(Slack 連携)
 
 ## 使い方
 
@@ -24,6 +25,9 @@ node src/cli.js summarize ID --force   # 要約済みでも再生成
 node src/cli.js hooks install      # Claude Code の hooks に登録 (hooks 連携を参照)
 node src/cli.js hooks status       # 登録状況を表示
 node src/cli.js hooks uninstall    # 登録を削除
+node src/cli.js report             # 今日の日報をターミナルに表示 (Slack 連携を参照)
+node src/cli.js report --week      # 今週の週報を表示
+node src/cli.js report --slack     # 表示して、Slack にも送る
 npm test                           # テストを実行
 ```
 
@@ -61,6 +65,10 @@ npm test                           # テストを実行
 | `NOTION_DATABASE_ID` | キー形式(`TASK-12`)を探す Notion データベースの ID(`tasks.notion.databaseId` が優先) |
 | `NOTION_DATA_SOURCE_ID` | 同じく Notion のデータソースの ID(`tasks.notion.dataSourceId` が優先) |
 | `WORKLOG_NOTION_API` | Notion の API のベース URL。主にテスト用です。既定は `https://api.notion.com` |
+| `SLACK_WEBHOOK_URL` | Slack の Incoming Webhook の URL。`https://` のものだけ使います |
+| `SLACK_BOT_TOKEN` | Slack の Bot トークン。送り先のチャンネルと組で使います |
+| `SLACK_CHANNEL` | Bot で投稿するチャンネル(`slack.channel` が優先) |
+| `WORKLOG_SLACK_API` | Slack の Web API のベース URL。主にテスト用です。既定は `https://slack.com/api` |
 | `PORT` | 待ち受けポート(`--port` が優先) |
 
 ## Codex 対応
@@ -422,6 +430,105 @@ Notion には `POST /v1/comments` で、ページへのコメントとして投�
 - Linear / Jira / Backlog: この開発環境から接続できないため、実際のサービスでは確認していません。公式の SDK / ドキュメント(`@linear/sdk` の型定義、gitlabhq の `doc/api`、nulab/backlog-js、jira.js)に合わせた偽サーバーとテストでだけ確認しています。実際に使うときは、まず取得の表示から確かめてください。
 - Notion: Notion の API にもこの開発環境から接続できないため、実際のサービスでは確認していません。公式 SDK(`@notionhq/client`、`Notion-Version` 2025-09-03)の型定義に合わせた偽サーバーとテスト(`test/notion.test.js`)でだけ確認しています。取得もコメントの投稿も、実際に使うときはまず取得の表示から確かめてください。
 
+## Slack 連携
+
+日報・週報を Slack に送ります。画面からも CLI からも送れます。セッション終了の通知(任意)もあります。設定が無ければ何も送りません。
+
+### 送り方
+
+どちらか一方を環境変数で設定します。
+
+- Incoming Webhook: `SLACK_WEBHOOK_URL`。`https://` の URL だけ使います。
+- Bot トークン: `SLACK_BOT_TOKEN` と、送り先のチャンネル(`config.json` の `slack.channel`、無ければ `SLACK_CHANNEL`)。Slack アプリの設定で、そのチャンネルに投稿できるようにしておいてください。投稿には `chat.postMessage` を、投稿へのリンクの取得には `chat.getPermalink` を使います。リンクが取れなくても投稿は成功扱いです。
+
+両方あるときは、投稿のリンクが取れる Bot を優先します。Webhook にはリンクを返す仕組みが無いので、「Slack で開く」は出ません。リダイレクトは追わず、1 回のリクエストは 10 秒でタイムアウトします。Bot の API が 429 を返したときは、再試行までの秒数を表示します。`WORKLOG_SLACK_API` は API の URL を変えるためのもので、主にテスト用です。
+
+Webhook の URL とトークンはサーバー側だけで使い、ブラウザには渡しません。画面に渡すのは、送り先の種類(Bot / Webhook)とチャンネル名(Webhook のときは「Incoming Webhook」)、コストを含めるか、通知の設定だけです(`GET /api/config` の `slack`)。
+
+### 設定
+
+`~/.work-log/config.json` の `slack` に書きます(任意)。
+
+```json
+{
+  "slack": {
+    "channel": "<チャンネル名または ID>",
+    "includeCost": false,
+    "maxSessions": 20,
+    "notify": "session_end"
+  }
+}
+```
+
+- `channel`: Bot で投稿するチャンネルです。
+- `includeCost`: `true` にすると、合計に API 換算コストを載せます。既定は載せません。
+- `maxSessions`: セッション一覧に出す件数です。既定は 20 で、超えた分は「ほか n セッション」とまとめます。
+- `notify`: `"session_end"` にすると、セッション終了を通知します(後述)。
+
+トークンや Webhook の URL は `config.json` に書かず、環境変数で渡します。
+
+### 日報・週報の内容
+
+- 見出し: 日報は日付、週報は月曜から日曜までの期間です。
+- 合計: 作業時間、セッション数、コミット数です。API 換算コストは `includeCost` を設定したときだけ載せます。
+- プロジェクト別: 作業時間とセッション数、コミット数です。
+- タスク: 紐付いた課題のタイトルと状態(取得できたもの)、リンクです。期間内に作業時間のあるタスクを、作業時間の長い順に並べます。
+- セッション一覧: 開始時刻、タイトル、プロジェクト、時間、コミット数です。Codex のセッションには「(Codex)」と付けます。
+
+集計の規則:
+
+- 作業時間は、アクティビティの区間のうち期間に入る部分だけを数えます。
+- コミットは、時刻が期間内のものだけを数えます。
+- 作業時間もコミットも期間内に無いセッションは載せません。
+- タイムゾーンは、画面ではブラウザのもの、CLI では `--tz`(無ければ環境変数 `TZ`)です。日付の境目はそのタイムゾーンの 0 時で、夏時間の切り替えにも対応します。
+
+送る本文の扱い:
+
+- Slack の記法で意味を持つ `&` `<` `>` は、逃がしてから送ります。
+- 1 セクションが 3000 文字を超えないよう、セッション一覧は分けて送ります。
+- 本文は秘匿情報をマスキングします(`WORKLOG_NO_MASK=1` の対象外です)。
+
+### 画面から送る
+
+何も選んでいないときの右側(週の集計)に、「今日の日報…」と「この週の週報…」のボタンが出ます。週報は、表示している週が対象です。
+
+1. ボタンを押すと、確認ダイアログに、送る内容が読みやすい形で表示されます。
+2. 「投稿する」を押したときだけ送ります。
+3. プレビューの後に内容が変わったとき(セッションが進んだ場合など)は、送らずに、もう一度確認するよう求めます。
+4. 送ったあとは、結果を表示します。Bot で送ったときは、投稿への「Slack で開く」リンクも出ます。画面の自動更新で描き直しても残ります(ページを再読み込みすると消えます)。
+
+送り先が未設定のときは、ボタンの代わりに、設定を案内する文を表示します。チャンネルの参加者全員が読めるので、内容を確認してから送ってください。
+
+### CLI から送る
+
+```sh
+node src/cli.js report [--week] [--date YYYY-MM-DD] [--tz <IANA名>] [--slack]
+```
+
+- 既定は今日の日報です。`--week` で、`--date`(省略すると今日)を含む週の週報にします。
+- 内容はターミナルに表示します。
+- `--slack` を付けると、確認なしで送ります。cron などで定期的に送れます。
+- 失敗したときは、メッセージを表示して exit 1 で終わります。
+
+例: 平日の 18 時に日報を送る(パスは環境に合わせてください)。
+
+```
+0 18 * * 1-5  cd <リポジトリのパス> && SLACK_WEBHOOK_URL=<Webhook の URL> node src/cli.js report --slack
+```
+
+### セッション終了の通知
+
+`slack.notify` が `"session_end"` のとき、サーバーの起動中に hooks の `SessionEnd` を受けたセッションを、1 件ずつ送ります。hooks 連携(`hooks install`)が必要です。
+
+- 内容: タイトル、プロジェクト、作業時間、コミット数、Codex の印、紐付いたタスクです。API 換算コストは `includeCost` を設定したときだけ載せます。
+- 終了から 2 時間以内のものだけ送ります。サーバーの停止中に終わったセッションを、起動後にまとめて送ることはありません。
+- 同じ終了は二度送りません。送った記録は `slack-notified.json` に残します。送信に失敗したときも、同じものを繰り返し送りません(警告をログに出します)。
+- 本文は秘匿情報をマスキングします。
+
+### 動作確認
+
+Slack の API には、この開発環境から接続できないため、実際の Slack では確認していません。公式 SDK(`@slack/web-api`、`@slack/webhook`)の形に合わせた偽サーバーとテスト(`test/slack.test.js`)でだけ確認しています。実際に使うときは、まず `report` コマンドで本文を確かめ、次にテスト用のチャンネルへ送ってみてください。
+
 ## 各値の算出方法
 
 - コミット数: Bash ツールで実行された `git commit` のうち、成功したものの数です。ヒアドキュメントの本文や文字列の中にある "git commit" は数えません。出力の `[branch hash] 件名` でハッシュを確認できたものと、エラーにならなかったがハッシュが出なかったもの(`-q` など)を数えます。失敗したもの(`nothing to commit` など)は数えません。
@@ -448,12 +555,13 @@ Notion には `POST /v1/comments` で、ページへのコメントとして投�
 - `links.json`: 詳細パネルから手で付け外ししたタスクです。
 - `github.json`: GitHub の issue / PR の取得結果(ETag を含む)です。形式と再確認の間隔は「タスク管理連携」の「課題管理サービス連携」を参照してください。
 - `tracker-<name>.json`: GitLab / Linear / Jira / Backlog / Notion の課題の取得結果です(`tracker-gitlab.json`、`tracker-notion.json` など。GitLab は ETag を含む)。再確認の間隔は GitHub と同じです。
+- `slack-notified.json`: セッション終了の通知を送ったセッションの記録です(新しい 500 件まで)。形式は「Slack 連携」の「セッション終了の通知」を参照してください。
 
 ## ディレクトリ構成
 
 ```
 src/
-  cli.js         コマンドラインの入口 (serve / scan / summarize / hooks / hook)
+  cli.js         コマンドラインの入口 (serve / scan / summarize / hooks / hook / report)
   server.js      HTTP サーバー、API、ファイル監視、更新通知、フックからの通知の受け口
   store.js       ログの収集、JSON キャッシュ、要約の管理、セッション状態の判定
   paths.js       ログとキャッシュの場所
@@ -468,6 +576,8 @@ src/
     base.js        共通部分。キャッシュ、再確認の間隔、API 制限中の停止、同時取得数、タイムアウト
     providers.js   GitLab / Linear / Jira / Backlog / Notion の取得とコメント投稿
     index.js       サービスの一覧、設定の反映、`ABC-123` 形式の振り分け、タスクへの課題情報の付与
+  slack.js       Slack への送信。Incoming Webhook と Bot トークン(chat.postMessage)に対応
+  report.js      日報・週報の集計と、Slack 用・ターミナル用の本文、セッション終了の通知の本文
   filter.js      セッション一覧の絞り込み(期間・プロジェクト・タグ・ツール・タスク・キーワード)
   parser.js      JSONL を 1 セッションの集計レコードに変換
   codex.js       Codex CLI のログ(rollout)を同じ集計レコードに変換。.zst の読み込みも担当
