@@ -4,6 +4,9 @@
 //   work-log scan            ログを解析してセッション一覧を表示
 //   work-log summarize [ID]  LLMで要約(IDを省略すると未要約のものをすべて)
 //   work-log report [--week] [--date YYYY-MM-DD] [--slack] [--discord] [--teams] [--google-chat] …  日報・週報を表示(送り先のオプションで送る。一覧は destinations.js)
+//   work-log ical [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--out file]  カレンダー(.ics)を書き出す(省くと過去30日、標準出力へ)
+//   work-log sync [--week] [--date YYYY-MM-DD] [--from … --to …] --gcal|--toggl|--clockify|--harvest [--dry-run]
+//                            終わったセッションをカレンダー・工数管理サービスに記録する(確認なし。一覧は sync/index.js)
 //   work-log hooks install   Claude Code の hooks に登録(uninstall / status も可)
 //   work-log hook            hooks から呼ばれる受け口(手動では使わない)
 import { defaultPaths } from './paths.js';
@@ -93,6 +96,47 @@ if (cmd === 'scan') {
       const r = await store.report({ ...params, target: t });
       const sent = await store.destinations[t].post(r.message);
       console.log(`${DEST_BY_NAME[t].label} に送りました${sent.url ? `: ${sent.url}` : ''}`);
+    }
+  } catch (err) {
+    console.error(err.message);
+    process.exit(1);
+  }
+} else if (cmd === 'ical') {
+  try {
+    const r = store.calendar({ from: flag('from'), to: flag('to'), tz: flag('tz') || process.env.TZ });
+    const out = flag('out');
+    if (out) {
+      const { writeFile } = await import('node:fs/promises');
+      await writeFile(out, r.ics);
+      console.error(`${out} に書き出しました(${(r.ics.match(/^BEGIN:VEVENT/gm) || []).length}件)`);
+    } else {
+      process.stdout.write(r.ics);
+    }
+  } catch (err) {
+    console.error(err.message);
+    process.exit(1);
+  }
+} else if (cmd === 'sync') {
+  // cron などから定期的に記録できるよう、確認なしで送る(--dry-run は内容を表示するだけ)
+  try {
+    const { SYNCS } = await import('./sync/index.js');
+    const { periodRange, validTimeZone, todayIn } = await import('./report.js');
+    const targets = SYNCS.filter((s) => args.includes(s.flag));
+    if (!targets.length) throw new Error(`記録先を指定してください(${SYNCS.map((s) => s.flag).join(' / ')})`);
+    const tz = validTimeZone(flag('tz') || process.env.TZ);
+    let range = { from: flag('from'), to: flag('to'), tz };
+    if (!range.from && !range.to) {
+      const r = periodRange({ period: args.includes('--week') ? 'week' : 'day', date: flag('date') || todayIn(tz), timeZone: tz });
+      range = { from: new Date(r.from).toISOString(), to: new Date(r.to).toISOString(), tz };
+    }
+    const dryRun = args.includes('--dry-run');
+    for (const t of targets) {
+      const plan = await store.sync(t.name, range);
+      console.log(`${dryRun ? '[dry-run] ' : ''}${t.label}(${plan.status.destination})`);
+      console.log(plan.previewText);
+      if (dryRun || !(plan.create.length + plan.update.length + plan.delete.length)) continue;
+      const r = await store.postSync({ target: t.name, ...range }, plan.hash);
+      console.log(`${t.label} に記録しました: 追加 ${r.created}件・更新 ${r.updated}件・削除 ${r.deleted}件`);
     }
   } catch (err) {
     console.error(err.message);

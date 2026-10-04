@@ -19,6 +19,9 @@ import { remoteWebBase, webBaseFromRemote } from './git.js';
 import { filterSessions } from './filter.js';
 import { mask, maskDeep } from './mask.js';
 import { createHash } from 'node:crypto';
+import { Syncs } from './sync/index.js';
+import { resolveRange } from './sync/entries.js';
+import { buildCalendar } from './ical.js';
 
 // Git の情報は外部(手作業のコミットなど)でも変わるので、短時間だけ使い回す
 const GIT_CACHE_MS = 60 * 1000;
@@ -50,7 +53,8 @@ export function fingerprint(session) {
 export class Store {
   // sourceDirs: { codex: dir, ... }(Claude Code 以外のログの場所。省いた取り込み元は読まない)
   // destinations: { slack: client, ... }(省いた送り先は環境変数から作る。作るときは { cacheDir } を渡す)。slack / discord / teams / googleChat は個別に渡してもよい
-  constructor({ projectsDir, cacheDir, codexDir = null, sourceDirs = {}, github = null, destinations = {}, slack = null, discord = null, teams = null, googleChat = null } = defaultPaths()) {
+  // syncs: { toggl: client, ... }(カレンダー・工数管理サービスへの記録。省いた記録先は環境変数から作る)
+  constructor({ projectsDir, cacheDir, codexDir = null, sourceDirs = {}, github = null, destinations = {}, slack = null, discord = null, teams = null, googleChat = null, syncs = {} } = defaultPaths()) {
     const given = { slack, discord, teams, googlechat: googleChat, ...destinations };
     this.destinations = Object.fromEntries(DESTINATIONS.map((d) => [d.name, given[d.name] || new d.Client({ cacheDir })]));
     this.slack = this.destinations.slack;
@@ -76,6 +80,7 @@ export class Store {
     this.links = {}; // sessionId -> { add: [ref], remove: [id] }(画面から手で付け外ししたタスク)
     this.linksFile = path.join(cacheDir, 'links.json');
     this.remotes = new Map(); // cwd -> { at, promise }
+    this.syncs = new Syncs({ cacheDir, clients: syncs });
   }
 
   // 設定(任意): ~/.work-log/config.json。今はタスクIDの拾い方とリンク先だけ
@@ -98,6 +103,7 @@ export class Store {
     this.taskCfg = normalizeConfig(json);
     this.trackers.setConfig(json.tasks || {});
     for (const d of DESTINATIONS) this.destinations[d.name].setConfig(json[d.name] || {});
+    this.syncs.setConfig(json);
   }
 
   // 利用者の単価表(任意)。読めなければ組み込みの単価だけを使う
@@ -426,6 +432,29 @@ export class Store {
     const r = await this.report(params);
     if (r.hash !== hash) throw Object.assign(new Error('プレビューの後に内容が変わりました。もう一度確認してください'), { status: 409 });
     return this.destinations[r.target].post(r.message);
+  }
+
+  // カレンダー(.ics)の書き出し。from / to は "YYYY-MM-DD" か ISO 8601(省くと過去30日)。文字列は伏せてから書き出す
+  calendar({ from, to, tz, now = Date.now() } = {}) {
+    const range = resolveRange({ from, to }, { timeZone: validTimeZone(tz), defaultDays: 30, maxDays: 366, now });
+    return { ...range, ics: buildCalendar(this.sessions(now), { ...range, now }) };
+  }
+
+  // カレンダー・工数管理サービスへの記録の下見。終わったセッションだけが対象。params: { from, to, tz }(省くと過去7日)
+  async sync(target, { from, to, tz, now = Date.now() } = {}) {
+    if (!this.loaded) await this.load();
+    const range = resolveRange({ from, to }, { timeZone: validTimeZone(tz), defaultDays: 7, maxDays: 93, now });
+    const plan = await this.syncs.plan(target, this.sessions(now), { ...range, now });
+    return { ...plan, previewText: this.syncs.previewText(plan, validTimeZone(tz || plan.timeZone)) };
+  }
+
+  // 下見と同じ内容のときだけ記録する(見せた内容と違うものを送らないため)
+  async postSync({ target, ...params } = {}, hash) {
+    return this.syncs.exclusive(String(target), async () => {
+      const plan = await this.sync(target, params);
+      if (plan.hash !== hash) throw Object.assign(new Error('プレビューの後に内容が変わりました。もう一度確認してください'), { status: 409 });
+      return { target: plan.target, ...(await this.syncs.apply(plan.target, plan)) };
+    });
   }
 
   // セッション終了の通知(config.json の slack.notify / discord.notify が "session_end" のとき)。hooks の SessionEnd を受けたセッションが対象。
