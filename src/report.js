@@ -331,3 +331,216 @@ export function sessionEndGoogleChat(s, { includeCost = false } = {}) {
 export function plainFromGoogleChat(text) {
   return text.replace(/\*/g, '').replace(/<([^|>]+)\|([^>]+)>/g, '$2 ($1)');
 }
+
+// ---------------------------------------------------------------- 共通(テキスト系の送り先)
+// 見出し・要約・各セクションの行を作る。書式ごとの記号の逃がし方(esc)とリンクの書き方(link)だけ送り先に任せる
+function reportParts(report, { includeCost = false, maxSessions = 20 } = {}, { esc: e, link }) {
+  const { totals, range } = report;
+  const time = (iso) => new Intl.DateTimeFormat('ja-JP', { timeZone: range.timeZone, ...(range.period === 'week' ? { month: 'numeric', day: 'numeric' } : {}), hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
+  const summary = report.sessions.length
+    ? `作業 ${dur(totals.activeMs)}・${totals.sessions}セッション・${totals.commits}コミット${includeCost && totals.usd != null ? `・API 換算 $${totals.usd.toFixed(2)}` : ''}`
+    : 'この期間の作業はありません。';
+  const sections = [];
+  if (report.projects.length) sections.push(['プロジェクト別', report.projects.map((p) => `${e(p.project)}  ${dur(p.activeMs)}(${p.sessions}セッション・${p.commits}コミット)`)]);
+  if (report.tasks.length) sections.push(['タスク', report.tasks.map((t) => `${link(t.label, t.url)}${t.issue ? ` ${e(t.issue.title)}(${e(t.issue.stateLabel)})` : ''}  ${dur(t.activeMs)}`)]);
+  const lines = report.sessions.map((s) => `${time(s.start)} ${e(s.title)} — ${e(s.project)}・${dur(s.activeMs)}${s.commits ? `・${s.commits}コミット` : ''}${otherTool(s)}`);
+  return { heading: `Work Log ${title(range)}`, summary, sections, lines, maxSessions: Math.min(maxSessions, lines.length) };
+}
+
+// セッション一覧を n 件までにしたセクションを足す(n を超えた分は件数だけ書く)
+const withSessions = (sections, lines, n) => (lines.length ? [...sections, ['セッション', [...lines.slice(0, n), ...(lines.length > n ? [`ほか ${lines.length - n} セッション`] : [])]]] : sections);
+
+// 本文が上限に収まるまで、セッションを後ろから5件ずつ減らす
+function fitSessions(p, render, fits) {
+  let n = p.maxSessions;
+  let out = render(withSessions(p.sections, p.lines, n));
+  while (!fits(out) && n > 0) out = render(withSessions(p.sections, p.lines, (n = Math.max(0, n - 5))));
+  return out;
+}
+
+const chars = (s) => [...s].length;
+const FOOTER = 'ローカルの AI コーディングツールのセッションログから Work Log で作成';
+
+// 全角にして書式やメンションとして解釈されないようにする(送り先ごとの対応表を渡す)
+const fullwidth = (map) => {
+  const re = new RegExp(`[${Object.keys(map).map((c) => `\\${c}`).join('')}]`, 'g');
+  return (s) => String(s ?? '').replace(/\r?\n/g, ' ').replace(re, (c) => map[c]);
+};
+// http(s) の URL だけを通し、bad に当たる文字は %xx にする
+const safeUrl = (url, bad) => (url && /^https?:\/\//.test(url) ? String(url).replace(bad, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')}`) : null);
+
+// ---------------------------------------------------------------- Chatwork
+// Chatwork 記法: [info][title]…[/title]…[/info]、[hr]。リンクは URL をそのまま書けば自動でリンクになる。
+// [To:123] [toall] [info] などの記法は '[' で始まるので、利用者の文字列の [ ] は全角にして記法として働かせない。
+// 本文の上限は API 定義(chatwork/api の RAML)で 65535 文字。余裕を見て 30000 文字に収める
+const CW_MAX = 30000;
+const cwEsc = fullwidth({ '[': '［', ']': '］' });
+const cwLink = (label, url) => {
+  const u = safeUrl(url, /[[\]\s]/g);
+  return u ? `${cwEsc(label)} ${u}` : cwEsc(label);
+};
+
+export function toChatwork(report, { includeCost = false, maxSessions = 20 } = {}) {
+  const p = reportParts(report, { includeCost, maxSessions }, { esc: cwEsc, link: cwLink });
+  const render = (sections) => {
+    const body = [p.summary, ...sections.map(([name, ls]) => `[hr]\n${name}\n${ls.map((l) => `・${l}`).join('\n')}`), `[hr]\n${FOOTER}`].join('\n');
+    return `[info][title]${p.heading}[/title]${body}[/info]`;
+  };
+  const body = fitSessions(p, render, (t) => chars(t) <= CW_MAX);
+  return { body, preview: body };
+}
+
+export function sessionEndChatwork(s, { includeCost = false } = {}) {
+  const parts = [cwEsc(s.project), dur(s.activeMs), `${s.commits}コミット`];
+  if (s.tool && s.tool !== 'claude') parts.push(toolLabel(s.tool));
+  if (includeCost && s.cost) parts.push(`API 換算 $${s.cost.usd.toFixed(2)}`);
+  const tasks = (s.tasks || []).map((t) => cwLink(t.label, t.url));
+  return { body: `[info][title]セッション終了: ${cwEsc(s.displayTitle || s.title)}[/title]${parts.join('・')}${tasks.length ? `\nタスク: ${tasks.join(', ')}` : ''}[/info]` };
+}
+
+// Chatwork 記法をプレーンテキストに戻す(画面のプレビュー用)
+export function plainFromChatwork(text) {
+  return text.replace(/\[title\]/g, '').replace(/\[\/title\]/g, '\n').replace(/\[hr\]\n?/g, '────────\n').replace(/\[\/?info\]/g, '').trim();
+}
+
+// ---------------------------------------------------------------- Mattermost
+// Markdown(見出し・リスト・リンク)。記号は \ で逃がし、@channel / @all / @here / @ユーザー は全角の ＠ にしてメンションにしない。
+// 1投稿の上限は 16383 文字(古いサーバーの上限。新しいサーバーは 262144 文字まで)
+const MM_MAX = 16383;
+const mmEsc = (s) => String(s ?? '').replace(/\r?\n/g, ' ').replace(/@/g, '＠').replace(/([\\`*_~[\]<>|#])/g, '\\$1');
+const mmLink = (label, url) => {
+  const u = safeUrl(url, /[()\s<>]/g);
+  return u ? `[${mmEsc(label)}](${u})` : mmEsc(label);
+};
+
+export function toMattermost(report, { includeCost = false, maxSessions = 20 } = {}) {
+  const p = reportParts(report, { includeCost, maxSessions }, { esc: mmEsc, link: mmLink });
+  const render = (sections) => [`### ${p.heading}`, p.summary, ...sections.map(([name, ls]) => `#### ${name}\n${ls.map((l) => `- ${l}`).join('\n')}`), `*${FOOTER}*`].join('\n\n');
+  const text = fitSessions(p, render, (t) => chars(t) <= MM_MAX);
+  return { text, preview: text };
+}
+
+export function sessionEndMattermost(s, { includeCost = false } = {}) {
+  const parts = [mmEsc(s.project), dur(s.activeMs), `${s.commits}コミット`];
+  if (s.tool && s.tool !== 'claude') parts.push(toolLabel(s.tool));
+  if (includeCost && s.cost) parts.push(`API 換算 $${s.cost.usd.toFixed(2)}`);
+  const tasks = (s.tasks || []).map((t) => mmLink(t.label, t.url));
+  return { text: [`**セッション終了: ${mmEsc(s.displayTitle || s.title)}**`, parts.join('・'), ...(tasks.length ? [`タスク: ${tasks.join(', ')}`] : [])].join('\n') };
+}
+
+// Mattermost の Markdown をプレーンテキストに戻す(画面のプレビュー用)
+export function plainFromMattermost(text) {
+  return text.replace(/^#{1,6} /gm, '').replace(/\*\*/g, '').replace(/^\*(.*)\*$/gm, '$1').replace(/\[([^\]]*)\]\(([^)]+)\)/g, '$1 ($2)').replace(/\\([\\`*_~[\]<>|#])/g, '$1');
+}
+
+// ---------------------------------------------------------------- Rocket.Chat
+// Rocket.Chat の Markdown(*太字*、[名前](URL))。逃がす書き方が確かでないので、書式やメンション・チャンネル参照(@all / #room)になる記号は全角にする。
+// 1メッセージの上限は設定 Message_MaxAllowedSize の初期値 5000 文字
+const RC_MAX = 5000;
+const rcEsc = fullwidth({ '*': '＊', _: '＿', '~': '～', '`': '｀', '[': '［', ']': '］', '@': '＠', '#': '＃', '<': '＜', '>': '＞' });
+const rcLink = (label, url) => {
+  const u = safeUrl(url, /[()\s<>]/g);
+  return u ? `[${rcEsc(label)}](${u})` : rcEsc(label);
+};
+
+export function toRocketChat(report, { includeCost = false, maxSessions = 20 } = {}) {
+  const p = reportParts(report, { includeCost, maxSessions }, { esc: rcEsc, link: rcLink });
+  const render = (sections) => [`*${p.heading}*\n${p.summary}`, ...sections.map(([name, ls]) => `*${name}*\n${ls.map((l) => `• ${l}`).join('\n')}`)].join('\n\n');
+  const text = fitSessions(p, render, (t) => chars(t) <= RC_MAX);
+  return { text, preview: text };
+}
+
+export function sessionEndRocketChat(s, { includeCost = false } = {}) {
+  const parts = [rcEsc(s.project), dur(s.activeMs), `${s.commits}コミット`];
+  if (s.tool && s.tool !== 'claude') parts.push(toolLabel(s.tool));
+  if (includeCost && s.cost) parts.push(`API 換算 $${s.cost.usd.toFixed(2)}`);
+  const tasks = (s.tasks || []).map((t) => rcLink(t.label, t.url));
+  return { text: [`*セッション終了: ${rcEsc(s.displayTitle || s.title)}*`, parts.join('・'), ...(tasks.length ? [`タスク: ${tasks.join(', ')}`] : [])].join('\n') };
+}
+
+// Rocket.Chat の Markdown をプレーンテキストに戻す(画面のプレビュー用)
+export function plainFromRocketChat(text) {
+  return text.replace(/\*/g, '').replace(/\[([^\]]*)\]\(([^)]+)\)/g, '$1 ($2)');
+}
+
+// ---------------------------------------------------------------- LINE WORKS
+// プレーンテキストだけ。テキストメッセージは 2000 文字までなので、章ごとに詰めて複数のメッセージに分ける
+// (5通に収まらないときはセッションを減らす)。URL は貼れば自動でリンクになる
+const LW_MAX = 1900;
+const LW_MESSAGES = 5;
+const plainEsc = (s) => String(s ?? '').replace(/\r?\n/g, ' ');
+const plainLink = (label, url) => (url && /^https?:\/\//.test(url) ? `${plainEsc(label)} (${String(url).replace(/\s/g, encodeURIComponent)})` : plainEsc(label));
+
+// ブロック(空行で区切る塊)を上限以内のメッセージに詰める。1つで収まらないブロックは行で分ける
+function packBlocks(blocks, max) {
+  const out = [];
+  let cur = '';
+  const push = (b, sep) => {
+    if (cur && chars(`${cur}${sep}${b}`) <= max) cur += `${sep}${b}`;
+    else {
+      if (cur) out.push(cur);
+      cur = b;
+    }
+  };
+  for (const b of blocks) {
+    if (chars(b) <= max) push(b, '\n\n');
+    else for (const l of b.split('\n')) push([...l].slice(0, max).join(''), '\n');
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+export function toLineWorks(report, { includeCost = false, maxSessions = 20 } = {}) {
+  const p = reportParts(report, { includeCost, maxSessions }, { esc: plainEsc, link: plainLink });
+  const render = (sections) => packBlocks([`${p.heading}\n${p.summary}`, ...sections.map(([name, ls]) => `■ ${name}\n${ls.map((l) => `・${l}`).join('\n')}`)], LW_MAX);
+  const messages = fitSessions(p, render, (m) => m.length <= LW_MESSAGES);
+  return { messages, preview: messages.join('\n\n') };
+}
+
+export function sessionEndLineWorks(s, { includeCost = false } = {}) {
+  const parts = [plainEsc(s.project), dur(s.activeMs), `${s.commits}コミット`];
+  if (s.tool && s.tool !== 'claude') parts.push(toolLabel(s.tool));
+  if (includeCost && s.cost) parts.push(`API 換算 $${s.cost.usd.toFixed(2)}`);
+  const tasks = (s.tasks || []).map((t) => plainLink(t.label, t.url));
+  const text = [`セッション終了: ${plainEsc(s.displayTitle || s.title)}`, parts.join('・'), ...(tasks.length ? [`タスク: ${tasks.join(', ')}`] : [])].join('\n');
+  return { messages: [[...text].slice(0, LW_MAX).join('')] };
+}
+
+// LINE WORKS はプレーンテキストなので、そのまま使う
+export const plainFromLineWorks = (text) => text;
+
+// ---------------------------------------------------------------- 汎用 Webhook(Zapier / n8n / Make など)
+// JSON をそのまま POST する。report には buildReport の結果(秘匿情報はマスキング済み)を渡す。
+// text は人が読むための要約(プレーンテキスト)。費用は includeCost のときだけ入れる
+export function toWebhook(report, { includeCost = false, maxSessions = 20 } = {}) {
+  const { range, totals } = report;
+  const p = reportParts(report, { includeCost, maxSessions }, { esc: plainEsc, link: plainLink });
+  const text = [p.heading, p.summary, ...withSessions(p.sections, p.lines, p.maxSessions).map(([name, ls]) => `\n■ ${name}\n${ls.map((l) => `・${l}`).join('\n')}`)].join('\n');
+  const payload = {
+    type: 'report',
+    version: 1,
+    period: range.period,
+    range: { start: new Date(range.from).toISOString(), end: new Date(range.to).toISOString(), startDate: range.start, timeZone: range.timeZone },
+    totals: { activeMs: totals.activeMs, sessions: totals.sessions, commits: totals.commits, ...(includeCost && totals.usd != null ? { usd: totals.usd } : {}) },
+    projects: report.projects.map((x) => ({ project: x.project, activeMs: x.activeMs, sessions: x.sessions, commits: x.commits })),
+    tasks: report.tasks.map((t) => ({ id: t.id, label: t.label, url: t.url || null, activeMs: t.activeMs, ...(t.issue ? { issue: { title: t.issue.title, state: t.issue.stateLabel } } : {}) })),
+    sessions: report.sessions.map((s) => ({ id: s.id, title: s.title, project: s.project, tool: s.tool, start: s.start, activeMs: s.activeMs, commits: s.commits, status: s.status })),
+    text,
+  };
+  return { ...payload, preview: JSON.stringify(payload, null, 2) };
+}
+
+export function sessionEndWebhook(s, { includeCost = false } = {}) {
+  return {
+    type: 'session_end',
+    version: 1,
+    session: {
+      id: s.id, title: s.displayTitle || s.title, project: s.project, tool: s.tool || 'claude', start: s.start, end: s.end, activeMs: s.activeMs, commits: s.commits,
+      tasks: (s.tasks || []).map((t) => ({ id: t.id || null, label: t.label, url: t.url || null })),
+      ...(includeCost && s.cost ? { usd: s.cost.usd } : {}),
+    },
+  };
+}
+
+// 汎用 Webhook のプレビューは整形した JSON なので、そのまま使う
+export const plainFromWebhook = (text) => text;
