@@ -10,10 +10,11 @@ import { HookLog, deriveStatus } from './live.js';
 import { sessionGit } from './git.js';
 import { costOf, modelFamily, sessionCost, setPricingOverrides } from './pricing.js';
 import { parseCodexFile } from './codex.js';
-import { extractTaskRefs, normalizeConfig, refsFromText, resolveRef, githubRepoOf } from './tasks.js';
+import { extractTaskRefs, normalizeConfig, refsFromText, resolveRef, repoInfoOf } from './tasks.js';
+import { Trackers } from './trackers/index.js';
+import { buildWorkLog } from './worklog.js';
 import { remoteWebBase, webBaseFromRemote } from './git.js';
 import { filterSessions } from './filter.js';
-import { GitHubIssues } from './github.js';
 import { mask } from './mask.js';
 import { createHash } from 'node:crypto';
 
@@ -46,7 +47,8 @@ export function fingerprint(session) {
 
 export class Store {
   constructor({ projectsDir, cacheDir, codexDir = null, github = null } = defaultPaths()) {
-    this.github = github || new GitHubIssues({ cacheDir });
+    this.trackers = new Trackers({ cacheDir, github });
+    this.github = this.trackers.github;
     this.projectsDir = projectsDir;
     this.codexDir = codexDir;
     this.cacheDir = cacheDir;
@@ -67,12 +69,22 @@ export class Store {
   // 設定(任意): ~/.work-log/config.json。今はタスクIDの拾い方とリンク先だけ
   async loadConfig() {
     const file = path.join(this.cacheDir, 'config.json');
+    let text = '';
     try {
-      this.taskCfg = normalizeConfig(JSON.parse(await readFile(file, 'utf8')));
+      text = await readFile(file, 'utf8');
     } catch (err) {
       if (err.code !== 'ENOENT') console.warn(`[work-log] ${file} を読めません: ${err.message}`);
-      this.taskCfg = normalizeConfig();
     }
+    if (text === this.configText) return; // 変わっていなければ作り直さない(取得中の状態やキャッシュを保つ)
+    this.configText = text;
+    let json = {};
+    try {
+      json = text ? JSON.parse(text) : {};
+    } catch (err) {
+      console.warn(`[work-log] ${file} を読めません: ${err.message}`);
+    }
+    this.taskCfg = normalizeConfig(json);
+    this.trackers.setConfig(json.tasks || {});
   }
 
   // 利用者の単価表(任意)。読めなければ組み込みの単価だけを使う
@@ -345,20 +357,14 @@ export class Store {
   async resolvedTasks(session, { enrich = false, ...opts } = {}) {
     if (!session.tasks.length) return [];
     if (enrich) return this.enrichTasks(await this.resolvedTasks(session), opts);
-    let repo = githubRepoOf(webBaseFromRemote(session.repoUrl));
-    if (!repo && session.tasks.some((t) => t.kind === 'github' && !t.repo)) repo = githubRepoOf(await this.remoteFor(session.cwd));
-    return session.tasks.map((t) => resolveRef(t, { repo, cfg: this.taskCfg }));
+    let repoInfo = repoInfoOf(webBaseFromRemote(session.repoUrl));
+    if (!repoInfo && session.tasks.some((t) => t.kind === 'github')) repoInfo = repoInfoOf(await this.remoteFor(session.cwd));
+    return session.tasks.map((t) => resolveRef(t, { repoInfo, cfg: this.taskCfg, trackers: this.trackers })).filter(Boolean);
   }
 
-  // GitHub の issue / PR に、タイトル・状態・ラベルなどを付ける(取れなければ付けない)
-  async enrichTasks(tasks, { onUpdate, waitMs } = {}) {
-    const gh = tasks.filter((t) => t.kind === 'github' && t.repo && t.number);
-    if (!gh.length) return tasks;
-    const found = await this.github.getMany(gh, { onUpdate, waitMs });
-    return tasks.map((t) => {
-      const e = t.kind === 'github' ? found[`${t.repo}#${t.number}`] : null;
-      return e ? { ...t, issue: e.data || null, issueError: e.error || null } : t;
-    });
+  // 課題(GitHub / GitLab / Linear / Jira / Backlog)のタイトル・状態・ラベルなどを付ける(取れなければ付けない)
+  async enrichTasks(tasks, opts = {}) {
+    return this.trackers.enrich(tasks, opts);
   }
 
   // 期間内に動いたセッションをタスクごとにまとめる(時間・コスト・コミットはセッション全体の値)
@@ -367,48 +373,30 @@ export class Store {
     return this.enrichTasks(list, opts);
   }
 
-  // issue に投稿する作業記録(Markdown)。秘匿情報はマスキングする
+  // 課題に投稿する作業記録。書式はサービスに合わせ(Markdown / Jira 記法 / プレーンテキスト)、秘匿情報はマスキングする
   async issueComment(taskId, { timeZone } = {}) {
     const t = (await this.taskSummaries({})).find((x) => x.id === taskId);
     if (!t) throw new Error(`タスクが見つかりません: ${taskId}`);
-    if (t.kind !== 'github' || !t.repo) throw new Error('GitHub の issue / PR に解決できたタスクだけにコメントできます');
-    // 時刻は画面と同じタイムゾーンで書く(不正な指定はサーバーのタイムゾーン)
-    let tz;
-    try {
-      tz = timeZone ? new Intl.DateTimeFormat('ja-JP', { timeZone }).resolvedOptions().timeZone : undefined;
-    } catch {
-      tz = undefined;
-    }
-    const fmt = (iso) => new Date(iso).toLocaleString('ja-JP', { timeZone: tz, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-    const dur = (ms) => {
-      const m = Math.round(ms / 60000);
-      return m < 60 ? `${m}分` : `${Math.floor(m / 60)}時間${m % 60 ? `${m % 60}分` : ''}`;
+    const provider = t.provider && this.trackers.get(t.provider);
+    if (!provider || !provider.valid(t)) throw new Error('連携しているサービス(GitHub / GitLab / Linear / Jira / Backlog)の課題に解決できたタスクだけにコメントできます');
+    const sessions = [...t.sessions].reverse().map((s) => ({ ...s, hashes: (this.getRaw(s.id)?.commitList || []).map((c) => c.hash) }));
+    const body = mask(buildWorkLog({ ...t, sessions }, { format: provider.commentFormat(), timeZone }));
+    return {
+      provider: provider.name,
+      providerLabel: provider.label,
+      target: t.label || t.id,
+      authenticated: await provider.authenticated(),
+      body,
+      hash: createHash('sha256').update(`${provider.name}\n${body}`).digest('hex').slice(0, 16),
+      ref: { id: t.id, repo: t.repo, number: t.number, mr: t.mr },
     };
-    const cell = (s) => String(s).replace(/\|/g, '\\|').replace(/\n/g, ' ');
-    const rows = [...t.sessions].reverse().map((s) => {
-      const raw = this.getRaw(s.id);
-      const hashes = (raw?.commitList || []).map((c) => c.hash).join(' ');
-      return `| ${fmt(s.start)} | ${cell(s.title)} | ${s.tool === 'codex' ? 'Codex' : 'Claude Code'} | ${dur(s.activeMs)} | ${s.commits}${hashes ? ` (${hashes})` : ''} |`;
-    });
-    const body = mask([
-      `### 作業記録(Work Log)`,
-      '',
-      `${t.sessions.length}セッション・作業 ${dur(t.activeMs)}・${t.commits}コミット(${fmt(t.first)} 〜 ${fmt(t.last)})`,
-      '',
-      '| 開始 | セッション | ツール | 作業時間 | コミット |',
-      '| --- | --- | --- | --- | --- |',
-      ...rows,
-      '',
-      '<sub>ローカルの AI コーディングツールのセッションログから Work Log で作成</sub>',
-    ].join('\n'));
-    return { repo: t.repo, number: t.number, body, hash: createHash('sha256').update(body).digest('hex').slice(0, 16) };
   }
 
   // プレビューと同じ内容のときだけ投稿する(見せた内容と違うものを投稿しないため)
   async postIssueComment(taskId, hash, opts = {}) {
     const c = await this.issueComment(taskId, opts);
     if (c.hash !== hash) throw Object.assign(new Error('プレビューの後に内容が変わりました。もう一度確認してください'), { status: 409 });
-    return this.github.comment(c.repo, c.number, c.body);
+    return this.trackers.get(c.provider).comment(c.ref, c.body);
   }
 
   async taskSummaries(params = {}) {
@@ -416,7 +404,7 @@ export class Store {
     const byId = new Map();
     for (const s of sessions) {
       for (const t of await this.resolvedTasks(s)) {
-        const cur = byId.get(t.id) || { id: t.id, label: t.label, kind: t.kind, url: t.url || null, repo: t.repo || null, number: t.number ?? null, sources: [], projects: [], sessions: [], activeMs: 0, usd: 0, commits: 0 };
+        const cur = byId.get(t.id) || { id: t.id, label: t.label, kind: t.kind, provider: t.provider || null, url: t.url || null, repo: t.repo || null, host: t.host || null, number: t.number ?? null, mr: Boolean(t.mr), sources: [], projects: [], sessions: [], activeMs: 0, usd: 0, commits: 0 };
         if (!cur.url && t.url) cur.url = t.url;
         for (const src of t.sources || []) if (!cur.sources.includes(src)) cur.sources.push(src);
         if (!cur.projects.includes(s.project)) cur.projects.push(s.project);

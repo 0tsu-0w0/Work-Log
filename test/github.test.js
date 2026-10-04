@@ -134,7 +134,7 @@ test('作業記録のコメント: プレビューと同じ内容だけを投稿
   assert.equal(task.issue.title, 'カートの合計がずれる');
 
   const c = await store.issueComment('acme/web#12');
-  assert.equal(c.repo, 'acme/web');
+  assert.deepEqual([c.provider, c.target, c.ref.repo, c.ref.number, c.authenticated], ['github', 'web#12', 'acme/web', 12, true]);
   assert.match(c.body, /1セッション・作業 20分・1コミット/);
   assert.match((await store.issueComment('acme/web#12', { timeZone: 'Asia/Tokyo' })).body, /10\/1 10:00 〜 10\/1 10:20/);
   assert.match((await store.issueComment('acme/web#12', { timeZone: 'UTC' })).body, /10\/1 01:00 〜 10\/1 01:20/);
@@ -152,7 +152,8 @@ test('作業記録のコメント: プレビューと同じ内容だけを投稿
   });
   const base = `http://127.0.0.1:${server.address().port}`;
   const preview = await (await fetch(`${base}/api/tasks/comment?id=${encodeURIComponent('acme/web#12')}`)).json();
-  assert.equal(preview.github.authenticated, true);
+  assert.equal(preview.authenticated, true);
+  assert.equal(preview.ref, undefined); // 内部の参照情報は画面に返さない
   assert.equal(preview.hash, c.hash);
   const posted = await fetch(`${base}/api/tasks/comment`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'acme/web#12', hash: preview.hash }) });
   assert.equal(posted.status, 200);

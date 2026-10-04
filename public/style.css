@@ -277,8 +277,10 @@ del { color: #cf222e; text-decoration: none; }
 .label .dot { width: 8px; height: 8px; border-radius: 50%; }
 .state { display: inline-block; font-size: 10.5px; font-weight: 600; border-radius: 999px; padding: 0 7px; color: #fff; white-space: nowrap; }
 .state.open { background: #1a7f37; }
-.state.merged, .state.done { background: #8250df; }
-.state.draft, .state.closed-other { background: #6e7781; }
+.state.in_progress { background: #0969da; }
+.state.done { background: #8250df; }
+.state.canceled { background: #6e7781; }
+.provider { font-size: 10.5px; color: var(--muted); border: 1px solid var(--line-strong); border-radius: 4px; padding: 0 4px; margin-left: 2px; }
 .chip .state { margin-left: 4px; }
 .comment-btn { margin: 8px 0 2px; font-size: 12px; }
 .comment-dialog { border: 1px solid var(--line-strong); border-radius: 10px; background: var(--panel); color: var(--text); max-width: min(720px, 92vw); padding: 16px 18px; }

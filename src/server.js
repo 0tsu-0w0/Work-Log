@@ -62,6 +62,7 @@ export function createServer(store, { env = process.env } = {}) {
         codexDir: store.codexDir,
         hooks: { installed: hooks.events, lastEventAt: store.hooks.lastEventAt },
         github: await store.github.status(),
+        trackers: await store.trackers.status(),
       });
     }
     if (req.method === 'GET' && parts[1] === 'sessions' && parts.length === 2) {
@@ -77,7 +78,8 @@ export function createServer(store, { env = process.env } = {}) {
       if (parts[2] === 'comment') {
         try {
           const c = await store.issueComment(url.searchParams.get('id'), { timeZone: url.searchParams.get('tz') || undefined });
-          return send(res, 200, out({ ...c, github: await store.github.status() }));
+          const { ref, ...rest } = c;
+          return send(res, 200, out(rest));
         } catch (err) {
           return send(res, 400, { error: err.message });
         }

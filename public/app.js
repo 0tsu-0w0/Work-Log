@@ -1,5 +1,5 @@
 import { renderCosts } from './costs.js';
-import { renderTasks, taskLink, issueState } from './tasks.js';
+import { renderTasks, taskLink, issueState, notePosted } from './tasks.js';
 
 const $ = (id) => document.getElementById(id);
 const HOUR_PX = 48;
@@ -422,9 +422,9 @@ async function commentOnIssue(taskId, button) {
   } catch (err) {
     return msg(err.message, 'error');
   }
-  if (!preview.github.authenticated) return msg('投稿には GitHub のトークンが必要です(環境変数 GITHUB_TOKEN か、gh auth login)。', 'error');
+  if (!preview.authenticated) return msg(`${preview.providerLabel} への投稿には認証情報が必要です(README の「課題管理サービス連携」を参照)。`, 'error');
   const dlg = $('comment-dialog');
-  $('comment-target').textContent = `${preview.repo}#${preview.number}`;
+  $('comment-target').textContent = `${preview.providerLabel} ${preview.target}`;
   $('comment-body').textContent = preview.body;
   dlg.showModal();
   dlg.onclose = async () => {
@@ -432,7 +432,8 @@ async function commentOnIssue(taskId, button) {
     button.disabled = true;
     try {
       const r = await api('/api/tasks/comment', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: taskId, hash: preview.hash, tz: TZ }) });
-      button.insertAdjacentHTML('afterend', `<p class="small">投稿しました: <a href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">${esc(r.url)}</a></p>`);
+      notePosted(taskId, r.url);
+      await refresh();
     } catch (err) {
       msg(err.message, 'error');
     } finally {

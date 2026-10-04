@@ -13,19 +13,31 @@ function day(iso) {
   return new Date(iso).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric', weekday: 'short' });
 }
 
-// issue / PR の状態。色だけに頼らず文字でも示す
-export function issueState(issue) {
-  if (!issue) return '';
-  const kind = issue.isPR ? 'PR' : 'Issue';
-  const [cls, label] =
-    issue.state === 'merged' ? ['merged', 'Merged']
-    : issue.state === 'open' ? (issue.draft ? ['draft', 'Draft'] : ['open', 'Open'])
-    : issue.stateReason === 'not_planned' || issue.isPR ? ['closed-other', 'Closed']
-    : ['done', 'Closed'];
-  return `<span class="state ${cls}" title="${kind}">${kind} ${label}</span>`;
+// 画面の自動更新で描き直しても、開いた行と投稿したコメントのリンクは残す
+const expanded = new Set();
+const posted = new Map();
+export function notePosted(taskId, url) {
+  posted.set(taskId, url);
 }
 
-const ISSUE_ERROR = { not_found: '見つからないか、読む権限がありません', rate_limited: 'GitHub の API 制限中です', timeout: '取得がタイムアウトしました', network: 'GitHub に接続できません' };
+export const PROVIDER_LABEL = { github: 'GitHub', gitlab: 'GitLab', linear: 'Linear', jira: 'Jira', backlog: 'Backlog' };
+const CATEGORY_TITLE = { open: '未着手', in_progress: '進行中', done: '完了', canceled: '中止・見送り' };
+
+// 課題の状態。サービスごとの状態名(stateLabel)を、4つの分類(stateCategory)の色で示す。色だけに頼らず文字でも示す
+export function issueState(issue) {
+  if (!issue) return '';
+  const cat = issue.stateCategory || 'open';
+  return `<span class="state ${esc(cat)}" title="${esc(CATEGORY_TITLE[cat] || '')}">${esc(issue.kindLabel || 'Issue')} ${esc(issue.stateLabel || '')}</span>`;
+}
+
+const ISSUE_ERROR = {
+  not_found: '見つからないか、読む権限がありません',
+  unauthorized: '認証情報が無いか、正しくありません',
+  forbidden: '読む権限がありません',
+  rate_limited: 'API の制限中です',
+  timeout: '取得がタイムアウトしました',
+  network: '接続できません',
+};
 
 function issueInfo(t) {
   if (t.issue) {
@@ -33,7 +45,7 @@ function issueInfo(t) {
     const who = t.issue.assignees.length ? `<span class="small">担当 ${t.issue.assignees.map(esc).join(', ')}</span>` : '';
     return `<div class="issue">${issueState(t.issue)} <span class="issue-title">${esc(t.issue.title)}</span></div><div class="issue-meta">${labels}${who}</div>`;
   }
-  if (t.issueError) return `<div class="small">GitHub: ${esc(ISSUE_ERROR[t.issueError] || t.issueError)}</div>`;
+  if (t.issueError) return `<div class="small">${esc(PROVIDER_LABEL[t.provider] || '')}: ${esc(ISSUE_ERROR[t.issueError] || t.issueError)}</div>`;
   return '';
 }
 
@@ -57,7 +69,7 @@ export function renderTasks(root, tasks, { onSession, onComment }) {
       <thead><tr><th>タスク</th><th>見つけた場所</th><th>プロジェクト</th><th class="n">セッション</th><th class="n">作業時間</th><th class="n">コミット</th><th class="n">コスト</th><th>期間</th></tr></thead>
       <tbody>${tasks.map((t, i) => `
         <tr class="task-row" data-i="${i}">
-          <td><button class="toggle" aria-expanded="false" aria-label="セッションを表示">▸</button> ${taskLink(t)}${issueInfo(t)}</td>
+          <td><button class="toggle" aria-expanded="${expanded.has(t.id)}" aria-label="セッションを表示">${expanded.has(t.id) ? '▾' : '▸'}</button> ${taskLink(t)}${t.provider ? ` <span class="provider">${esc(PROVIDER_LABEL[t.provider])}</span>` : ''}${issueInfo(t)}</td>
           <td>${t.sources.map((s) => `<span class="badge">${esc(SOURCE_LABEL[s] || s)}</span>`).join('')}</td>
           <td>${t.projects.map(esc).join(', ')}</td>
           <td class="n">${t.sessions.length}</td>
@@ -66,10 +78,11 @@ export function renderTasks(root, tasks, { onSession, onComment }) {
           <td class="n">${usd(t.usd)}</td>
           <td>${day(t.first)}${day(t.first) !== day(t.last) ? ` 〜 ${day(t.last)}` : ''}</td>
         </tr>
-        <tr class="task-sessions" data-i="${i}" hidden><td colspan="8"><ul>${t.sessions.map((s) => `
+        <tr class="task-sessions" data-i="${i}" ${expanded.has(t.id) ? '' : 'hidden'}><td colspan="8"><ul>${t.sessions.map((s) => `
           <li data-id="${esc(s.id)}"><span class="t">${esc(s.title)}</span>
             <span class="small">${s.tool === 'codex' ? 'Codex · ' : ''}${esc(s.project)} · ${day(s.start)} · ${dur(s.activeMs)} · ${s.commits}コミット · ${usd(s.usd)}</span></li>`).join('')}</ul>
-          ${t.kind === 'github' && t.repo && t.issueError !== 'not_found' ? `<button class="comment-btn" data-id="${esc(t.id)}">この${t.issue?.isPR ? 'PR' : ' issue '}に作業記録をコメント…</button>` : ''}</td></tr>`).join('')}
+          ${t.provider && t.issue ? `<button class="comment-btn" data-id="${esc(t.id)}">${esc(PROVIDER_LABEL[t.provider])} の ${esc(t.label)} に作業記録をコメント…</button>` : ''}
+          ${posted.has(t.id) ? `<p class="small">投稿しました: ${posted.get(t.id) ? `<a href="${esc(posted.get(t.id))}" target="_blank" rel="noopener noreferrer">${esc(posted.get(t.id))}</a>` : ''}</p>` : ''}</td></tr>`).join('')}
       </tbody>
     </table>`;
   root.querySelectorAll('.task-row .toggle').forEach((b) => {
@@ -77,6 +90,8 @@ export function renderTasks(root, tasks, { onSession, onComment }) {
       const i = b.closest('tr').dataset.i;
       const row = root.querySelector(`.task-sessions[data-i="${i}"]`);
       row.hidden = !row.hidden;
+      if (row.hidden) expanded.delete(tasks[i].id);
+      else expanded.add(tasks[i].id);
       b.setAttribute('aria-expanded', String(!row.hidden));
       b.textContent = row.hidden ? '▸' : '▾';
     });
