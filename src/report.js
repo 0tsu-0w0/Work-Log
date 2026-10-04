@@ -216,3 +216,71 @@ export function sessionEndDiscord(s, { includeCost = false } = {}) {
 export function plainFromDiscord(text) {
   return text.replace(/\*\*/g, '').replace(/\[([^\]]*)\]\(([^)]+)\)/g, '$1 ($2)').replace(/\\([\\*_~`|>[\]()#-])/g, '$1');
 }
+
+// ---------------------------------------------------------------- Microsoft Teams
+// Adaptive Card(TextBlock の Markdown は太字・斜体・リスト・リンクのみ。見出しや表は使えない)。
+// メッセージ全体は 28KB まで(Incoming Webhook / Workflows)なので、収まるようにセッション一覧を削る
+const TEAMS_MAX_BYTES = 26000;
+// Markdown として解釈される記号は、見た目の近い全角に置き換える(TextBlock では \ による逃がしが効かないため)
+const tEsc = (s) => String(s ?? '').replace(/\r?\n/g, ' ').replace(/[*_[\]]/g, (c) => ({ '*': '＊', _: '＿', '[': '［', ']': '］' })[c]);
+// URL の中の括弧と空白は %xx にする(encodeURIComponent は括弧を変えないため)
+const tLink = (label, url) =>
+  url && /^https?:\/\//.test(url) ? `[${tEsc(label)}](${String(url).replace(/[()\s]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')}`)})` : tEsc(label);
+
+function teamsCard(body) {
+  return {
+    type: 'message',
+    attachments: [
+      {
+        contentType: 'application/vnd.microsoft.card.adaptive',
+        contentUrl: null,
+        content: { $schema: 'http://adaptivecards.io/schemas/adaptive-card.json', type: 'AdaptiveCard', version: '1.4', msteams: { width: 'Full' }, body },
+      },
+    ],
+  };
+}
+
+const tb = (text, extra = {}) => ({ type: 'TextBlock', text, wrap: true, ...extra });
+
+export function toTeams(report, { includeCost = false, maxSessions = 20 } = {}) {
+  const { totals, range } = report;
+  const time = (iso) => new Intl.DateTimeFormat('ja-JP', { timeZone: range.timeZone, ...(range.period === 'week' ? { month: 'numeric', day: 'numeric' } : {}), hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
+  const summary = report.sessions.length
+    ? `作業 ${dur(totals.activeMs)}・${totals.sessions}セッション・${totals.commits}コミット${includeCost && totals.usd != null ? `・API 換算 $${totals.usd.toFixed(2)}` : ''}`
+    : 'この期間の作業はありません。';
+  const sections = [];
+  if (report.projects.length) sections.push(['プロジェクト別', report.projects.map((p) => `${tEsc(p.project)}  ${dur(p.activeMs)}(${p.sessions}セッション・${p.commits}コミット)`)]);
+  if (report.tasks.length) sections.push(['タスク', report.tasks.map((t) => `${tLink(t.label, t.url)}${t.issue ? ` ${tEsc(t.issue.title)}(${tEsc(t.issue.stateLabel)})` : ''}  ${dur(t.activeMs)}`)]);
+  let lines = report.sessions.map((s) => `${time(s.start)} ${tEsc(s.title)} — ${tEsc(s.project)}・${dur(s.activeMs)}${s.commits ? `・${s.commits}コミット` : ''}${s.tool === 'codex' ? '(Codex)' : ''}`);
+  const build = (sessionLines, hidden) => {
+    const all = [...sections, ...(sessionLines.length ? [['セッション', hidden ? [...sessionLines, `ほか ${hidden} セッション`] : sessionLines]] : [])];
+    const body = [tb(`Work Log ${title(range)}`, { weight: 'Bolder', size: 'Medium' }), tb(summary, { spacing: 'Small' })];
+    for (const [name, ls] of all) body.push(tb(name, { weight: 'Bolder', spacing: 'Medium' }), tb(ls.map((l) => `- ${l}`).join('\r'), { spacing: 'Small' }));
+    body.push(tb('ローカルの AI コーディングツールのセッションログから Work Log で作成', { size: 'Small', isSubtle: true, spacing: 'Medium' }));
+    return { card: teamsCard(body), all };
+  };
+  let shown = lines.slice(0, maxSessions);
+  let out = build(shown, lines.length - shown.length);
+  // 28KB を超えるなら、セッションを後ろから減らす
+  while (Buffer.byteLength(JSON.stringify(out.card)) > TEAMS_MAX_BYTES && shown.length) {
+    shown = shown.slice(0, Math.max(0, shown.length - 5));
+    out = build(shown, lines.length - shown.length);
+  }
+  const preview = [`**Work Log ${title(range)}**`, summary, ...out.all.map(([n, ls]) => `\n**${n}**\n${ls.map((l) => `- ${l}`).join('\n')}`)].join('\n');
+  return { ...out.card, preview };
+}
+
+export function sessionEndTeams(s, { includeCost = false } = {}) {
+  const parts = [tEsc(s.project), dur(s.activeMs), `${s.commits}コミット`];
+  if (s.tool === 'codex') parts.push('Codex');
+  if (includeCost && s.cost) parts.push(`API 換算 $${s.cost.usd.toFixed(2)}`);
+  const tasks = (s.tasks || []).map((t) => tLink(t.label, t.url));
+  const body = [tb(`セッション終了: ${tEsc(s.displayTitle || s.title)}`, { weight: 'Bolder' }), tb(parts.join('・'), { spacing: 'Small' })];
+  if (tasks.length) body.push(tb(`タスク: ${tasks.join(', ')}`, { spacing: 'Small' }));
+  return teamsCard(body);
+}
+
+// Teams の Markdown をプレーンテキストに戻す(画面のプレビュー用)
+export function plainFromTeams(text) {
+  return text.replace(/\*\*/g, '').replace(/\[([^\]]*)\]\(([^)]+)\)/g, '$1 ($2)');
+}
