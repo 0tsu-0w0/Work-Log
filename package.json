@@ -1,0 +1,14 @@
+{
+  "name": "work-log",
+  "version": "0.1.0",
+  "description": "Claude Codeの作業履歴を自動収集し、週カレンダーで可視化するローカルWebアプリ",
+  "type": "module",
+  "bin": { "work-log": "src/cli.js" },
+  "scripts": {
+    "start": "node src/cli.js",
+    "scan": "node src/cli.js scan",
+    "test": "node --test \"test/*.test.js\""
+  },
+  "engines": { "node": ">=20" },
+  "license": "MIT"
+}
