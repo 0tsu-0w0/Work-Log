@@ -179,14 +179,14 @@ Codex と同じように、次のツールのログも同じ集計レコード�
 | Aider | 各リポジトリの `.aider.chat.history.md`(あれば `.aider.input.history`) | `WORKLOG_AIDER_DIRS`(パス区切りで複数) |
 | Cursor | `…/Cursor/User/globalStorage/state.vscdb`(Linux は `~/.config`、macOS は `~/Library/Application Support`、Windows は `%APPDATA%` の下) | `WORKLOG_CURSOR_DIR` |
 
-- Gemini CLI: 1 行目のメタ情報と、以降のメッセージ(同じ ID のメッセージは後の行が正)を読みます。サブエージェント(`chats/<親セッションID>/`)も読みます。`logs.json` は入力した依頼だけの記録なので、`chats` が無いセッションに限って補助的に使います。
-- Copilot CLI: `session.start` / `user.message` / `assistant.message` / `session.shutdown` などのイベントを読みます。応答ごとの利用量(`assistant.usage`)はファイルに残らないので、終了時のモデルごとの利用量を使います。
-- Aider: 中央の保存場所が無いので、`WORKLOG_AIDER_DIRS` に挙げたフォルダの下を 3 階層まで探します。設定しないと読みません。依頼ごとの時刻は `.aider.input.history` からしか取れないため、あれば使います。
+- Gemini CLI: 1 行目のメタ情報と、以降のメッセージ(同じ ID のメッセージは後の行が正)を読みます。サブエージェント(`chats/<親セッションID>/`)も読みます。`logs.json` は入力した依頼だけの記録なので、`chats` が無いセッションに限って補助的に使います。2026-10-04 に実際の Gemini CLI 0.62.0 で書かれたログで確認済みです(下の「動作確認」)。モデルの振り分けの呼び出しは `chats` のログに残らないため、そのトークンは数えられません。
+- Copilot CLI: `session.start` / `user.message` / `assistant.message` / `session.shutdown` などのイベントを読みます。応答ごとの利用量(`assistant.usage`)はファイルに残らないので、終了時のモデルごとの利用量を使います。この利用量は再開をまたいで累積されるため、二重に数えないよう差し引いています。実際の Copilot CLI 1.0.91 のログで確認済みです。
+- Aider: 中央の保存場所が無いので、`WORKLOG_AIDER_DIRS` に挙げたフォルダの下を 3 階層まで探します。設定しないと読みません。依頼ごとの時刻は `.aider.input.history` からしか取れないため、あれば使います。実際の Aider 0.86.2 のログで確認済みです。
 - Cursor: Cursor の保存形式は公開されていません。ここで読んでいる形は、読み取りツール(`cursor-history`、`cursor-chat-history-mcp`)の実装から調べた非公式のもので、Cursor の更新で変わることがあります。SQLite は Node.js 標準の `node:sqlite`(Node.js 22.5 以降)で読み取り専用に開くので、それ未満では何も読みません。DB は常に書き換わるため、ファイル監視はせず、定期スキャンで読みます。
 - コスト: Gemini のモデルの単価は組み込んでいません。`~/.work-log/pricing.json` に書かない限り、単価不明として合計から除外します(「コスト」の「単価表の上書き」を参照)。
 - 画面の絞り込みや日報の「(ツール名)」の印は、Codex と同じように働きます。hooks 連携は Claude Code のみです。
 
-形式は、各ツールの公開ソース・スキーマに合わせて実装しています。実際のツールでの確認の範囲は、「送り先連携」の「動作確認」にまとめています。
+形式は、各ツールの公開ソース・スキーマに合わせて実装し、Codex CLI・Gemini CLI・Copilot CLI・Aider は実際のツールが書いたログでも確認しました(Cursor は未確認)。確認の範囲は、「送り先連携」の「動作確認」にまとめています。
 
 ## 画面
 
@@ -977,7 +977,19 @@ Slack、Discord、Teams、Google Chat の API には、この開発環境から�
 
 #### あとから加えた送り先・記録先・ログの取り込み元
 
-次のものも、この開発環境からは実際のアカウント・サービス・ツールに接続できないため、すべて偽サーバーとテストフィクスチャ(`test/fixtures/`)でだけ確認しています。実際のサービスでの動作は未確認です。確認の根拠は、各モジュールの先頭のコメントにも書いています。
+次のうち、下の「実際に確認したもの」に書いたもの以外は、この開発環境からは実際のアカウント・サービス・ツールに接続できないため、偽サーバーとテストフィクスチャ(`test/fixtures/`)でだけ確認しています。実際のサービスでの動作は未確認です。確認の根拠は、各モジュールの先頭のコメントにも書いています。
+
+実際に確認したもの(2026-10-04):
+
+- ログの取り込み元: 実際のツールを手元の偽のモデルサーバーに向けて動かし(本物の AI サービスの認証情報は使っていません)、書かれたログを Work Log で読みました。そのログはテストフィクスチャとして残しています(`test/fixtures/{aider,codex,gemini,copilot}-real`)。
+  - Aider 0.86.2(OpenAI 互換の偽サーバー): 複数行の `--message` の 2 行目が AI の応答として数えられていた、`/ask X` が 2 回数えられていた、の 2 点を直しました。
+  - Codex CLI 0.160.0(Responses API の偽サーバー): 出力が新しい形式("Process exited with code N")になり、失敗した `git commit` がコミットとして数えられていたのを直しました。未確認: `apply_patch`・変更ファイル、対話画面(TUI)、`.zst`。
+  - Gemini CLI 0.62.0(`GOOGLE_GEMINI_BASE_URL` の偽サーバー): 食い違いはありませんでした。プロジェクトのパス、依頼、コミット、トークンが一致しました。
+  - Copilot CLI 1.0.91(`COPILOT_PROVIDER_BASE_URL` による BYOK モード、GitHub ログインなし): 依頼がすべて落ちていた(`parentAgentTaskId`)、再開後にトークンが二重に数えられていた(終了時の利用量は累積)、失敗したシェルコマンドが成功として数えられていた("<shellId: N completed with exit code N>" の新形式)、ロックのフォルダがセッションとして並んでいた、の 4 点を直しました。
+  - Cursor: GUI アプリのため動かしていません。保存形式は引き続き非公式のものです。
+- Google: OAuth のトークン取得先、Calendar API、Google Chat の Webhook に、偽の認証情報で実際に接続しました。エラーメッセージを `invalid_client` と `invalid_grant` で区別するようにし、Google Chat の 403 では URL が間違っているか削除されている旨を説明するようにしました。正しい認証情報での成功時の応答は未確認です。
+- 実際の Claude Code のログから出力した `.ics` を Python の icalendar で読めることを確認しました。Obsidian 向けのノートは実際のフォルダに書き、markdown-it で描画して、悪意のあるタイトルが逃がされることを確認しました。汎用 Webhook は、この README の受け取り側の例で、正しい署名は通り、本文を改ざんすると弾かれることを確認しました。
+- 未確認: Mattermost・Rocket.Chat の実サーバー(開発環境で Docker が使えませんでした)。Slack・Discord・Teams・Chatwork・LINE WORKS・Notion・Linear・Jira・Toggl・Clockify・Harvest・Confluence・esa・Qiita には、開発環境から接続できません。
 
 送り先:
 
@@ -1000,12 +1012,13 @@ Slack、Discord、Teams、Google Chat の API には、この開発環境から�
 - Clockify(`test/sync.test.js`): 公式の文書と API はこの環境から読めなかったため、`clockify-sdk` 0.1.1 と `clockify-ts` 1.2108.13 の実装と型(`https://api.clockify.me/api/v1`、`X-Api-Key`、`time-entries` の POST / PUT / DELETE、`GET /user` の `activeWorkspace`)に合わせています。未確認: `PUT` で省いた項目が消えるか(省かずに全部送っています)、エラー応答の形、地域ごとの API の場所。
 - Harvest(`test/sync.test.js`): 公式の文書と API はこの環境から読めなかったため、`harvest-v2` 3.0.0 と `node-harvest-api` 1.0.6 の実装(`https://api.harvestapp.com/v2/time_entries`、`Authorization: Bearer` / `Harvest-Account-ID` / `User-Agent` のヘッダー、更新は `PATCH`)と、公式の古い文書(`harvesthq/api` の README)で `User-Agent` を求めていることに合わせています。未確認: 本文の `project_id` / `task_id` / `spent_date` / `hours` / `notes` の扱い(SDK は本文をそのまま渡すだけで、項目名は SDK からは確かめられていません)、開始・終了の時刻で記録する設定のアカウントで `hours` が受け付けられるか、エラー応答の形。
 
-ログの取り込み元(`test/fixtures/` のサンプルログで確認):
+ログの取り込み元(`test/fixtures/` のサンプルログと、実際のツールが書いたログ `*-real` で確認):
 
-- Gemini CLI(`test/gemini.test.js`): `google-gemini/gemini-cli` の `packages/core`(`chatRecordingService`、`chatRecordingTypes`、`storage`、`projectRegistry`。`@google/gemini-cli-core` 0.62)に合わせています。実際の Gemini CLI は動かしていません。
-- Copilot CLI(`test/copilot.test.js`): `@github/copilot` の同梱スキーマ(`schemas/session-events.schema.json`)と `app.js`(1.0.63)に合わせています。実際の Copilot CLI は動かしていません。
-- Aider(`test/aider.test.js`): `Aider-AI/aider` の `io.py`・`coders/base_coder.py`・`repo.py` と、prompt_toolkit の `FileHistory` に合わせています。実際の Aider は動かしていません。
-- Cursor(`test/cursor.test.js`): 保存形式は非公式です。オープンソースの読み取りツール(`cursor-history` 0.18、`cursor-chat-history-mcp` 0.2)の実装に合わせ、テストの中で同じ表の SQLite を作って確認しています(`node:sqlite` が使えない Node.js ではスキップします)。実際の Cursor では確認しておらず、Cursor の更新で読めなくなることがあります。
+- Gemini CLI(`test/gemini.test.js`): `google-gemini/gemini-cli` の `packages/core`(`chatRecordingService`、`chatRecordingTypes`、`storage`、`projectRegistry`。`@google/gemini-cli-core` 0.62)に合わせています。実際の Gemini CLI 0.62.0 のログでも確認しました(上の「実際に確認したもの」)。
+- Copilot CLI(`test/copilot.test.js`): `@github/copilot` の同梱スキーマ(`schemas/session-events.schema.json`)と `app.js`(1.0.63)に合わせています。実際の Copilot CLI 1.0.91 のログでも確認しました(BYOK モードのみ。GitHub ログインした状態は未確認)。
+- Aider(`test/aider.test.js`): `Aider-AI/aider` の `io.py`・`coders/base_coder.py`・`repo.py` と、prompt_toolkit の `FileHistory` に合わせています。実際の Aider 0.86.2 のログでも確認しました(上の「実際に確認したもの」)。
+- Codex CLI: 実際の Codex CLI 0.160.0 のログで確認しました(上の「実際に確認したもの」)。
+- Cursor(`test/cursor.test.js`): 保存形式は非公式です。オープンソースの読み取りツール(`cursor-history` 0.18、`cursor-chat-history-mcp` 0.2)の実装に合わせ、テストの中で同じ表の SQLite を作って確認しています(`node:sqlite` が使えない Node.js ではスキップします)。実際の Cursor は GUI アプリのため動かしておらず、Cursor の更新で読めなくなることがあります。
 
 実際に使うときは、まず `--dry-run`(記録先)や `report` コマンド(送り先)、画面のプレビューで内容を確かめ、テスト用のチャンネル・カレンダー・ワークスペースで試してから、本番で使ってください。
 
