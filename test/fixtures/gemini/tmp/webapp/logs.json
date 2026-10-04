@@ -1,0 +1,23 @@
+[
+  {
+    "sessionId": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+    "messageId": 0,
+    "type": "user",
+    "message": "ログイン画面のバリデーションを直して",
+    "timestamp": "2026-10-04T01:00:05.000Z"
+  },
+  {
+    "sessionId": "0ld5e55i-0000-4000-8000-000000000000",
+    "messageId": 0,
+    "type": "user",
+    "message": "テストを追加して",
+    "timestamp": "2025-06-01T10:00:00.000Z"
+  },
+  {
+    "sessionId": "0ld5e55i-0000-4000-8000-000000000000",
+    "messageId": 1,
+    "type": "user",
+    "message": "/quit",
+    "timestamp": "2025-06-01T10:20:00.000Z"
+  }
+]
