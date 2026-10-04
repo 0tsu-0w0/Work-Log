@@ -49,10 +49,10 @@ export function fingerprint(session) {
 
 export class Store {
   // sourceDirs: { codex: dir, ... }(Claude Code 以外のログの場所。省いた取り込み元は読まない)
-  // destinations: { slack: client, ... }(省いた送り先は環境変数から作る)。slack / discord / teams / googleChat は個別に渡してもよい
+  // destinations: { slack: client, ... }(省いた送り先は環境変数から作る。作るときは { cacheDir } を渡す)。slack / discord / teams / googleChat は個別に渡してもよい
   constructor({ projectsDir, cacheDir, codexDir = null, sourceDirs = {}, github = null, destinations = {}, slack = null, discord = null, teams = null, googleChat = null } = defaultPaths()) {
     const given = { slack, discord, teams, googlechat: googleChat, ...destinations };
-    this.destinations = Object.fromEntries(DESTINATIONS.map((d) => [d.name, given[d.name] || new d.Client()]));
+    this.destinations = Object.fromEntries(DESTINATIONS.map((d) => [d.name, given[d.name] || new d.Client({ cacheDir })]));
     this.slack = this.destinations.slack;
     this.discord = this.destinations.discord;
     this.teams = this.destinations.teams;
@@ -404,7 +404,7 @@ export class Store {
     return { name, dest: this.destinations[name], fmt: DEST_BY_NAME[name] };
   }
 
-  // 日報・週報。params: { target: 'slack' | 'discord' | 'teams' | 'googlechat', period: 'day' | 'week', date: 'YYYY-MM-DD', tz }
+  // 日報・週報。params: { target: 送り先の名前(destinations.js), period: 'day' | 'week', date: 'YYYY-MM-DD', tz }
   async report({ target = 'slack', period = 'day', date, tz, waitMs = 1500 } = {}) {
     const { name, dest, fmt } = this.destination(target);
     const timeZone = validTimeZone(tz);
@@ -416,7 +416,7 @@ export class Store {
     const data = buildReport({ sessions, tasks, costs: this.costs({ from, to }), range });
     const st = dest.status();
     // 秘匿情報は書式を整える前に伏せる(Discord の Markdown の記号を逃がすと "ghp_…" が "ghp\_…" になり、後からでは見つけられない)
-    const { preview, ...message } = fmt.report(maskDeep(data), { includeCost: st.includeCost, maxSessions: Number(dest.cfg.maxSessions) || 20 });
+    const { preview, ...message } = fmt.report(maskDeep(data), { includeCost: st.includeCost, maxSessions: Number(dest.cfg.maxSessions) || fmt.maxSessions || 20 });
     const masked = maskDeep(message);
     return { target: name, message: masked, preview: mask(preview), range, totals: data.totals, status: st, hash: createHash('sha256').update(`${name}\n${JSON.stringify(masked)}`).digest('hex').slice(0, 16) };
   }
