@@ -1,5 +1,5 @@
 import { renderCosts } from './costs.js';
-import { renderTasks, taskLink } from './tasks.js';
+import { renderTasks, taskLink, issueState } from './tasks.js';
 
 const $ = (id) => document.getElementById(id);
 const HOUR_PX = 48;
@@ -264,7 +264,7 @@ async function showDetail(id, { quiet = false } = {}) {
     <div class="summary" id="summary">${esc(s.summary)}</div>
     ${llm ? '' : '<p class="small">ANTHROPIC_API_KEY を設定して起動すると、LLMで要約できます。</p>'}
     <div class="section-title">タスク</div>
-    <div class="task-chips">${s.tasks.map((t) => `<span class="chip">${taskLink(t)}<button class="rm" data-id="${esc(t.id)}" title="このセッションから外す" aria-label="${esc(t.label)} を外す">×</button></span>`).join('') || '<span class="small">見つかっていません</span>'}</div>
+    <div class="task-chips">${s.tasks.map((t) => `<span class="chip" title="${esc(t.issue?.title || '')}">${taskLink(t)}${t.issue ? ` ${issueState(t.issue)}` : ''}<button class="rm" data-id="${esc(t.id)}" title="このセッションから外す" aria-label="${esc(t.label)} を外す">×</button></span>`).join('') || '<span class="small">見つかっていません</span>'}</div>
     <form class="task-add" id="task-add"><input name="task" placeholder="ABC-123、#45、課題のURL" aria-label="紐付けるタスク"><button>紐付け</button></form>
     ${renderGit(s)}
     ${s.changedFiles.length ? `<div class="section-title">変更ファイル</div><ul class="files">${s.changedFiles.map((f) => `<li>${esc(f)}</li>`).join('')}</ul>` : ''}
@@ -408,7 +408,37 @@ async function loadTasks() {
   if (state.tool) params.set('tool', state.tool);
   const { tasks } = await api(`/api/tasks?${params}`);
   if (label) $('range').textContent = label;
-  renderTasks($('tasks'), tasks, { onSession: (id) => showDetail(id) });
+  renderTasks($('tasks'), tasks, { onSession: (id) => showDetail(id), onComment: commentOnIssue });
+}
+
+const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+// issue への作業記録の投稿。投稿する本文をそのまま見せ、確認してから送る
+async function commentOnIssue(taskId, button) {
+  const msg = (text, cls = 'small') => button.insertAdjacentHTML('afterend', `<p class="${cls}">${esc(text)}</p>`);
+  let preview;
+  try {
+    preview = await api(`/api/tasks/comment?id=${encodeURIComponent(taskId)}&tz=${encodeURIComponent(TZ)}`);
+  } catch (err) {
+    return msg(err.message, 'error');
+  }
+  if (!preview.github.authenticated) return msg('投稿には GitHub のトークンが必要です(環境変数 GITHUB_TOKEN か、gh auth login)。', 'error');
+  const dlg = $('comment-dialog');
+  $('comment-target').textContent = `${preview.repo}#${preview.number}`;
+  $('comment-body').textContent = preview.body;
+  dlg.showModal();
+  dlg.onclose = async () => {
+    if (dlg.returnValue !== 'post') return;
+    button.disabled = true;
+    try {
+      const r = await api('/api/tasks/comment', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: taskId, hash: preview.hash, tz: TZ }) });
+      button.insertAdjacentHTML('afterend', `<p class="small">投稿しました: <a href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">${esc(r.url)}</a></p>`);
+    } catch (err) {
+      msg(err.message, 'error');
+    } finally {
+      button.disabled = false;
+    }
+  };
 }
 
 async function refresh() {

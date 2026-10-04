@@ -8,6 +8,7 @@ import path from 'node:path';
 import { extractTaskRefs, refsFromText, refsFromBranch, resolveRef, normalizeConfig, githubRepoOf } from '../src/tasks.js';
 import { Store } from '../src/store.js';
 import { createServer } from '../src/server.js';
+import { GitHubIssues } from '../src/github.js';
 
 const cfg = normalizeConfig();
 const ids = (map) => [...map.values()].map((r) => r.id);
@@ -71,7 +72,8 @@ async function setup(t) {
   await writeFile(path.join(proj, 's1.jsonl'), sessionLog(repo, '12-cart', 'カートの不具合 WEB-42 を直して', '2026-10-01T01:00:00Z'));
   await writeFile(path.join(proj, 's2.jsonl'), sessionLog(repo, 'main', 'WEB-42 の続き。UTF-8 の扱いも', '2026-10-02T01:00:00Z'));
   await writeFile(path.join(proj, 's3.jsonl'), sessionLog(repo, 'main', 'READMEを整える', '2026-10-03T01:00:00Z'));
-  const store = new Store({ projectsDir: path.join(root, 'projects'), cacheDir: path.join(root, 'cache') });
+  const github = new GitHubIssues({ cacheDir: path.join(root, 'cache'), env: {}, tokenProvider: async () => null, fetchImpl: async () => new Response('{}', { status: 404 }) });
+  const store = new Store({ projectsDir: path.join(root, 'projects'), cacheDir: path.join(root, 'cache'), github });
   await store.scan();
   return { root, store };
 }
@@ -102,7 +104,7 @@ test('画面から付け外しでき、保存される', async (t) => {
   assert.equal((await store.tasks({})).find((x) => x.id === 'WEB-42').sessions.length, 2);
   const saved = JSON.parse(await readFile(path.join(root, 'cache', 'links.json'), 'utf8'));
   assert.deepEqual(saved.s1.remove, []);
-  const reloaded = new Store({ projectsDir: path.join(root, 'projects'), cacheDir: path.join(root, 'cache') });
+  const reloaded = new Store({ projectsDir: path.join(root, 'projects'), cacheDir: path.join(root, 'cache'), github: store.github });
   await reloaded.scan();
   assert.ok((await reloaded.tasks({})).some((x) => x.id === 'DOC-5'));
 });

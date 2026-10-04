@@ -61,6 +61,7 @@ export function createServer(store, { env = process.env } = {}) {
         projectsDir: store.projectsDir,
         codexDir: store.codexDir,
         hooks: { installed: hooks.events, lastEventAt: store.hooks.lastEventAt },
+        github: await store.github.status(),
       });
     }
     if (req.method === 'GET' && parts[1] === 'sessions' && parts.length === 2) {
@@ -73,7 +74,26 @@ export function createServer(store, { env = process.env } = {}) {
       return send(res, 200, out({ sessions: list, projects, tags, tools }));
     }
     if (req.method === 'GET' && parts[1] === 'tasks') {
-      return send(res, 200, out({ tasks: await store.tasks(Object.fromEntries(url.searchParams)) }));
+      if (parts[2] === 'comment') {
+        try {
+          const c = await store.issueComment(url.searchParams.get('id'), { timeZone: url.searchParams.get('tz') || undefined });
+          return send(res, 200, out({ ...c, github: await store.github.status() }));
+        } catch (err) {
+          return send(res, 400, { error: err.message });
+        }
+      }
+      return send(res, 200, out({ tasks: await store.tasks(Object.fromEntries(url.searchParams), { onUpdate: () => broadcast('update') }) }));
+    }
+    // issue / PR への作業記録コメントの投稿: { "id": "owner/repo#12", "hash": "<プレビューの hash>" }
+    if (req.method === 'POST' && parts[1] === 'tasks' && parts[2] === 'comment') {
+      try {
+        const body = JSON.parse((await readBody(req)) || '{}');
+        const r = await store.postIssueComment(String(body.id || ''), String(body.hash || ''), { timeZone: body.tz ? String(body.tz) : undefined });
+        broadcast('update');
+        return send(res, 200, r);
+      } catch (err) {
+        return send(res, err.status || 400, { error: err.message });
+      }
     }
     // タスクの付け外し: { "add": ["ABC-123", "#45", "<課題のURL>"], "remove": ["ABC-9"] }
     if (req.method === 'POST' && parts[1] === 'sessions' && parts[3] === 'tasks') {
@@ -86,7 +106,7 @@ export function createServer(store, { env = process.env } = {}) {
       try {
         const v = await store.updateLinks(parts[2], { add: [].concat(body.add || []), remove: [].concat(body.remove || []) });
         broadcast('update');
-        return send(res, 200, out({ ...v, tasks: await store.resolvedTasks(v) }));
+        return send(res, 200, out({ ...v, tasks: await store.resolvedTasks(v, { enrich: true }) }));
       } catch (err) {
         return send(res, 400, { error: err.message });
       }
@@ -98,7 +118,7 @@ export function createServer(store, { env = process.env } = {}) {
     if (req.method === 'GET' && parts[1] === 'sessions' && parts.length === 3) {
       const s = store.sessions().find((x) => x.id === parts[2]);
       if (!s) return send(res, 404, { error: 'not found' });
-      const [git, tasks] = await Promise.all([store.gitFor(s.id), store.resolvedTasks(s)]);
+      const [git, tasks] = await Promise.all([store.gitFor(s.id), store.resolvedTasks(s, { enrich: true, onUpdate: () => broadcast('update') })]);
       return send(res, 200, out({ ...s, git, tasks }));
     }
     if (req.method === 'POST' && parts[1] === 'sessions' && parts[3] === 'summarize') {

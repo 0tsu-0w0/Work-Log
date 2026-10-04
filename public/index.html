@@ -56,6 +56,18 @@
     </aside>
   </main>
 
+  <dialog id="comment-dialog" class="comment-dialog">
+    <form method="dialog">
+      <h3><span id="comment-target"></span> にコメントを投稿します</h3>
+      <p class="small">次の内容がそのまま投稿されます。リポジトリを見られる人全員が読めます。</p>
+      <pre id="comment-body"></pre>
+      <div class="actions">
+        <button value="cancel">やめる</button>
+        <button value="post" class="primary">投稿する</button>
+      </div>
+    </form>
+  </dialog>
+
   <script type="module" src="app.js"></script>
 </body>
 </html>
