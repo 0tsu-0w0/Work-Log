@@ -737,7 +737,7 @@ Notion には `POST /v1/comments` で、ページへのコメントとして投�
 - Markdown の記号は `\` で逃がし、`@channel` / `@all` / `@here` / `@ユーザー名` は全角の `＠` にして、メンションにしません。
 - Webhook の URL は認証情報なので、サーバー側だけで使います。
 
-`config.json` の `mattermost` に書きます(任意)。`username` と `iconUrl` は、投稿の表示名とアイコンです。
+`config.json` の `mattermost` に書きます(任意)。`username` と `iconUrl` は、投稿の表示名とアイコンです。Mattermost は、サーバー設定 `EnablePostUsernameOverride` が有効でないと `username` を無視します(既定は無効)。表示名を変えたいときは、管理者に有効にしてもらってください。
 
 ```json
 {
@@ -747,7 +747,7 @@ Notion には `POST /v1/comments` で、ページへのコメントとして投�
 
 ### Rocket.Chat
 
-`ROCKETCHAT_WEBHOOK_URL` に、管理画面の「インテグレーション」で作った Incoming Webhook の URL(`https://<host>/hooks/<ID>/<token>`)を設定します。`https://` であればホストは問いません。
+`ROCKETCHAT_WEBHOOK_URL` に、管理画面の「インテグレーション」で作った Incoming Webhook の URL(`https://<host>/hooks/<ID>/<token>`)を設定します。`https://` であればホストは問いません。Incoming インテグレーションを作るユーザーには、メッセージの成りすまし(message-impersonate)権限が必要です(例: `rocket.cat`)。
 
 - `{ "text" }` を JSON で POST します。投稿へのリンクは返らないので、「開く」は出ません。失敗は `success: false` と `error` の JSON で返るので、その `error` を表示します。
 - 本文は、既定の上限(`Message_MaxAllowedSize` の初期値 5000)に収めます。
@@ -989,13 +989,17 @@ Slack、Discord、Teams、Google Chat の API には、この開発環境から�
   - Cursor: GUI アプリのため動かしていません。保存形式は引き続き非公式のものです。
 - Google: OAuth のトークン取得先、Calendar API、Google Chat の Webhook に、偽の認証情報で実際に接続しました。エラーメッセージを `invalid_client` と `invalid_grant` で区別するようにし、Google Chat の 403 では URL が間違っているか削除されている旨を説明するようにしました。正しい認証情報での成功時の応答は未確認です。
 - 実際の Claude Code のログから出力した `.ics` を Python の icalendar で読めることを確認しました。Obsidian 向けのノートは実際のフォルダに書き、markdown-it で描画して、悪意のあるタイトルが逃がされることを確認しました。汎用 Webhook は、この README の受け取り側の例で、正しい署名は通り、本文を改ざんすると弾かれることを確認しました。
-- 未確認: Mattermost・Rocket.Chat の実サーバー(開発環境で Docker が使えませんでした)。Slack・Discord・Teams・Chatwork・LINE WORKS・Notion・Linear・Jira・Toggl・Clockify・Harvest・Confluence・esa・Qiita には、開発環境から接続できません。
+- Mattermost(Docker の `mattermost/mattermost-preview`、実サーバー): `work-log report --mattermost` の Incoming Webhook の投稿で、見出し・リスト・逃がした Markdown が正しく描画されることを確認しました。タイトルに "@bob @channel" を含むセッションでは bob に通知が行かず(メンション数は 0 のまま)、対照として生の "@bob" を投稿したときは通知されました(1)。`username` の上書きは、サーバー設定 `EnablePostUsernameOverride` が有効でないと無視されることも分かりました(既定は無効)。
+- Rocket.Chat 8.8(Docker の `rocketchat/rocket.chat` と MongoDB 8.0、実サーバー): Incoming Webhook の投稿で `*太字*` やリストが描画されることを確認しました。こちらの投稿は `mentions=[]` で、bob の `userMentions` は 0 のままでした。対照の生の "@bob" は `mentions=['bob']` になりました。Incoming インテグレーションの作成には、メッセージの成りすまし(message-impersonate)権限を持つユーザー(例: `rocket.cat`)が必要です。
+- n8n 2.41.6(Docker の `n8nio/n8n`): Webhook トリガー(Raw Body 有効)と Code ノードのワークフローで、`X-WorkLog-Signature` を `"<時刻>.<本文>"` に対して検証しました。正しい鍵なら検証は成功し、誤った鍵なら失敗しました。日報の JSON の項目(`type`、`period`、`totals`、`sessions`)も受け取れました。
+- 実際の Mattermost の確認で見つかった不具合を直しました。タイトルを 60 文字に切ってからマスキングしていたため、トークンの一部(例: `ghp_abcd…`)がマスクされずに残ることがありました。マスキングしてから切るようにし(`src/mask.js` の `clipMasked`)、キャッシュのバージョンを上げてセッションを読み直すようにしました。
+- 未確認: Slack・Discord・Teams・Chatwork・LINE WORKS・Notion・Linear・Jira・Toggl・Clockify・Harvest・Confluence・esa・Qiita には、開発環境から接続できません。
 
 送り先:
 
 - Chatwork(`test/chatwork.test.js`): 公式の API 定義(chatwork/api の RAML。`body` は必須で 1〜65535 文字、応答は `message_id`)と、公式の MCP サーバー(`@chatwork/mcp-server`)の実装(`X-ChatWorkToken` ヘッダー、form-urlencoded)に合わせています。未確認: API への実際の送信、制限(429)の応答ヘッダーの正確な名前(`retry-after` か `x-ratelimit-reset` のどちらかを見ています)。
-- Mattermost(`test/mattermost.test.js`): mattermost/mattermost のソース(`webhook.go` のルートと JSON の本文、`incoming_webhook.go` の `text` / `username`(64 文字まで)/ `icon_url`(1024 文字まで)、`app/webhook.go` の自動分割)に合わせています。16383 文字は古いサーバーの上限です。未確認: 実際のサーバーへの送信。
-- Rocket.Chat(`test/rocketchat.test.js`): Rocket.Chat 7.0.0 のソース(`api.js` のルートと失敗時の JSON、`processWebhookMessage.ts`、`Message_MaxAllowedSize` の初期値 5000)に合わせています。未確認: 実際のサーバーへの送信、Markdown の記号の逃がし方(確かな方法が見つからないので全角にしています)。
+- Mattermost(`test/mattermost.test.js`): mattermost/mattermost のソース(`webhook.go` のルートと JSON の本文、`incoming_webhook.go` の `text` / `username`(64 文字まで)/ `icon_url`(1024 文字まで)、`app/webhook.go` の自動分割)に合わせています。16383 文字は古いサーバーの上限です。実サーバーでも確認しました(上の「実際に確認したもの」)。
+- Rocket.Chat(`test/rocketchat.test.js`): Rocket.Chat 7.0.0 のソース(`api.js` のルートと失敗時の JSON、`processWebhookMessage.ts`、`Message_MaxAllowedSize` の初期値 5000)に合わせています。Rocket.Chat 8.8 の実サーバーでも確認しました(上の「実際に確認したもの」)。未確認: Markdown の記号の逃がし方(確かな方法が見つからないので全角にしています)。
 - LINE WORKS(`test/lineworks.test.js`): 公式のドキュメントには届かなかったため、LINE WORKS の API を使う公開パッケージ(`nworks`、`chat-adapter-lineworks`、`lineworks-mcp-server`)の実装(URL、JWT の項目、scope、`Authorization: Bearer`、本文の形、テキスト 2000 文字の制限)に合わせています。JWT の署名は、自前の鍵とテストで検証しています。未確認: 実際の LINE WORKS への送信、公式ドキュメントとの突き合わせ。
 - 汎用 Webhook(`test/webhook.test.js`): 偽の fetch に対して、JSON の形と署名(`"<時刻>.<本文>"` の HMAC-SHA256)をテストで確認しています。受け取る側のサービス(Zapier など)では確認していません。
 - Confluence(`test/confluence.test.js`): `confluence.js` 3.2.0(atlassian の OpenAPI から生成された SDK)の v2 の定義(`POST /wiki/api/v2/pages`、`PUT …/pages/{id}`、`GET …/pages/{id}`、応答の `id` / `status` / `version.number` / `_links.webui`)に合わせています。未確認: エラー応答の細かい形、同じスペースに同名のページがあるときのエラーの内容、429 の `Retry-After` の有無、`webui` を基準の URL(`…/wiki`)に足した URL の正しさ。
