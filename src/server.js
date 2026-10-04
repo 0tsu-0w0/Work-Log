@@ -7,13 +7,14 @@ import { fileURLToPath } from 'node:url';
 import { mask } from './mask.js';
 import { llmAvailable, DEFAULT_MODEL } from './summarizer.js';
 import { SERVER_FILE } from './hook.js';
+import { PRICING_AS_OF, PRICING_SOURCE } from './pricing.js';
 import { status as hooksStatus, settingsPath } from './install.js';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
 const LIST_FIELDS = [
   'id', 'project', 'cwd', 'gitBranch', 'displayTitle', 'start', 'end', 'segments', 'activeMs', 'status', 'hook',
-  'messageCount', 'commits', 'workType', 'components', 'summarySource',
+  'messageCount', 'commits', 'workType', 'components', 'summarySource', 'cost',
 ];
 
 function maskDeep(v) {
@@ -74,6 +75,10 @@ export function createServer(store, { env = process.env } = {}) {
       const projects = [...new Set(all.map((s) => s.project))].sort();
       const tags = [...new Set(all.flatMap((s) => [s.workType, ...s.components]))].filter(Boolean).sort();
       return send(res, 200, out({ sessions: list, projects, tags }));
+    }
+    if (req.method === 'GET' && parts[1] === 'costs') {
+      const p = Object.fromEntries(url.searchParams);
+      return send(res, 200, out({ ...store.costs(p), pricing: { asOf: PRICING_AS_OF, source: PRICING_SOURCE } }));
     }
     if (req.method === 'GET' && parts[1] === 'sessions' && parts.length === 3) {
       const s = store.sessions().find((x) => x.id === parts[2]);

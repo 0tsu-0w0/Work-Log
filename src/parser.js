@@ -89,10 +89,12 @@ export function parseSessionText(text, { file = '', projectDir = '' } = {}) {
     pushes: 0,
     models: new Set(),
     tokens: { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 },
+    usage: new Map(), // "時(UTC)|モデル|fast|us" -> [input, output, cacheRead, cacheWrite5m, cacheWrite1h, webSearches]
   };
   const timestamps = [];
   const seenMessageIds = new Set();
   const gitToolUses = new Map(); // tool_use id -> { commit, push }
+  const msgUsage = new Map(); // message.id -> { timestamp, model, u }
 
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
@@ -140,13 +142,17 @@ export function parseSessionText(text, { file = '', projectDir = '' } = {}) {
       seenMessageIds.add(mid);
       if (!e.isSidechain) s.assistantMessages++;
       if (msg.model && !msg.model.startsWith('<')) s.models.add(msg.model);
-      const u = msg.usage;
-      if (u) {
-        s.tokens.input += u.input_tokens || 0;
-        s.tokens.output += u.output_tokens || 0;
-        s.tokens.cacheRead += u.cache_read_input_tokens || 0;
-        s.tokens.cacheCreation += u.cache_creation_input_tokens || 0;
-      }
+    }
+    // 分割された行のうち、後ろの行ほど output_tokens が確定値に近いので最後の usage を採る
+    if (msg.usage) {
+      const prev = msgUsage.get(mid);
+      msgUsage.set(mid, {
+        timestamp: prev?.timestamp || e.timestamp,
+        model: msg.model,
+        u: msg.usage,
+        final: Boolean(prev?.final || msg.stop_reason),
+        chars: (prev?.chars || 0) + contentChars(msg.content),
+      });
     }
     for (const c of Array.isArray(msg.content) ? msg.content : []) {
       if (c.type === 'text' && c.text && !e.isSidechain) s.assistantTexts.push(c.text);
@@ -164,6 +170,25 @@ export function parseSessionText(text, { file = '', projectDir = '' } = {}) {
         if (kind.commit || kind.push) gitToolUses.set(c.id, kind);
       }
     }
+  }
+
+  let estimatedOutput = 0;
+  for (const { timestamp, model, u: logged, final, chars } of msgUsage.values()) {
+    let u = logged;
+    // stop_reason の無い応答(サブエージェントのログなど)は、ストリーム開始時点の usage しか残っておらず
+    // output_tokens が極端に小さい。出力した本文の長さから見積もった値の方が大きければそちらを使う
+    if (!final) {
+      const est = Math.ceil(chars / CHARS_PER_OUTPUT_TOKEN);
+      if (est > (u.output_tokens || 0)) {
+        estimatedOutput += est - (u.output_tokens || 0);
+        u = { ...u, output_tokens: est };
+      }
+    }
+    s.tokens.input += u.input_tokens || 0;
+    s.tokens.output += u.output_tokens || 0;
+    s.tokens.cacheRead += u.cache_read_input_tokens || 0;
+    s.tokens.cacheCreation += u.cache_creation_input_tokens || 0;
+    addUsage(s.usage, timestamp, model, u);
   }
 
   timestamps.sort((a, b) => a - b);
@@ -201,7 +226,42 @@ export function parseSessionText(text, { file = '', projectDir = '' } = {}) {
     pushes: s.pushes,
     models: [...s.models],
     tokens: s.tokens,
+    usage: Object.fromEntries(s.usage),
+    estimatedOutputTokens: estimatedOutput, // 見積もりで補った出力トークン数
   };
+}
+
+// 確定した usage を持つ応答の実測で、本文(テキスト + ツール入力のJSON)はおよそ2文字で1トークン。
+// 思考(thinking)の本文はログに残らないので、見積もりは実際より少なめになる
+const CHARS_PER_OUTPUT_TOKEN = 2;
+
+function contentChars(content) {
+  if (!Array.isArray(content)) return 0;
+  let n = 0;
+  for (const c of content) {
+    if (c?.type === 'text') n += (c.text || '').length;
+    else if (c?.type === 'tool_use') n += JSON.stringify(c.input || {}).length;
+  }
+  return n;
+}
+
+// コスト計算用に、利用量を1時間・モデル単位でまとめる(時刻はUTC。日付への振り分けは表示側で行う)
+function addUsage(map, timestamp, model, u) {
+  if (!timestamp || !model || model.startsWith('<')) return; // <synthetic> などAPIを呼んでいない応答
+  const cw = u.cache_creation || {};
+  const total = u.cache_creation_input_tokens || 0;
+  const cw1h = cw.ephemeral_1h_input_tokens || 0;
+  // 内訳が無い古いログは、Claude Code の既定である5分キャッシュとみなす
+  const cw5m = cw.ephemeral_5m_input_tokens ?? Math.max(0, total - cw1h);
+  const key = [timestamp.slice(0, 13), model, u.speed === 'fast' ? 'fast' : '', u.inference_geo === 'us' ? 'us' : ''].join('|');
+  const row = map.get(key) || [0, 0, 0, 0, 0, 0];
+  row[0] += u.input_tokens || 0;
+  row[1] += u.output_tokens || 0;
+  row[2] += u.cache_read_input_tokens || 0;
+  row[3] += cw5m;
+  row[4] += cw1h;
+  row[5] += u.server_tool_use?.web_search_requests || 0;
+  map.set(key, row);
 }
 
 function firstLine(text) {

@@ -8,11 +8,12 @@ import { heuristicSummary } from './tagger.js';
 import { summarize } from './summarizer.js';
 import { HookLog, deriveStatus } from './live.js';
 import { sessionGit } from './git.js';
+import { costOf, modelFamily, sessionCost } from './pricing.js';
 
 // Git の情報は外部(手作業のコミットなど)でも変わるので、短時間だけ使い回す
 const GIT_CACHE_MS = 60 * 1000;
 
-const CACHE_VERSION = 2; // 解析結果の形が変わったら上げる(古いキャッシュを捨てて再解析させる)
+const CACHE_VERSION = 3; // 解析結果の形が変わったら上げる(古いキャッシュを捨てて再解析させる)
 
 export { defaultPaths };
 
@@ -74,7 +75,22 @@ export class Store {
       } catch {
         continue;
       }
-      for (const f of entries) if (f.isFile() && f.name.endsWith('.jsonl')) out.push({ file: path.join(dir, f.name), projectDir: dir });
+      for (const f of entries) {
+        if (f.isFile() && f.name.endsWith('.jsonl')) out.push({ file: path.join(dir, f.name), projectDir: dir });
+        // サブエージェントのログは <セッションID>/subagents/*.jsonl にある。利用量(コスト)だけ親セッションに合算する
+        if (f.isDirectory()) {
+          const sub = path.join(dir, f.name, 'subagents');
+          let subs = [];
+          try {
+            subs = await readdir(sub, { withFileTypes: true });
+          } catch {
+            continue;
+          }
+          for (const g of subs) {
+            if (g.isFile() && g.name.endsWith('.jsonl')) out.push({ file: path.join(sub, g.name), projectDir: dir, parentId: f.name });
+          }
+        }
+      }
     }
     return out;
   }
@@ -102,7 +118,7 @@ export class Store {
     const found = await this.listLogFiles();
     const seen = new Set();
     let changed = 0;
-    for (const { file, projectDir } of found) {
+    for (const { file, projectDir, parentId } of found) {
       seen.add(file);
       let st;
       try {
@@ -114,6 +130,7 @@ export class Store {
       if (cached && cached.mtimeMs === st.mtimeMs && cached.size === st.size) continue;
       try {
         const session = await parseSessionFile(file, projectDir);
+        if (parentId) session.parentId = parentId;
         this.files[file] = { mtimeMs: st.mtimeMs, size: st.size, session };
         changed++;
       } catch (err) {
@@ -133,7 +150,52 @@ export class Store {
   rawSessions() {
     return Object.values(this.files)
       .map((f) => f.session)
-      .filter((s) => s.start && s.messageCount > 0);
+      .filter((s) => !s.parentId && s.start && s.messageCount > 0);
+  }
+
+  // 親セッションID -> サブエージェントの解析結果
+  subagentIndex() {
+    const idx = new Map();
+    for (const { session } of Object.values(this.files)) {
+      if (!session.parentId) continue;
+      if (!idx.has(session.parentId)) idx.set(session.parentId, []);
+      idx.get(session.parentId).push(session);
+    }
+    return idx;
+  }
+
+  // 期間内のコストを、時間・モデル・プロジェクト単位で集計する(サブエージェントは親のプロジェクトに含める)
+  costs({ from, to, project } = {}) {
+    const fromKey = from ? new Date(from).toISOString().slice(0, 13) : '';
+    const toKey = to ? new Date(to).toISOString().slice(0, 13) : '\uffff';
+    const parents = new Map(this.rawSessions().map((x) => [x.id, x]));
+    const buckets = new Map();
+    const perSession = new Map();
+    const unknownModels = new Set();
+    let estimated = false;
+    for (const { session } of Object.values(this.files)) {
+      const owner = session.parentId ? parents.get(session.parentId) : session;
+      if (!owner || (project && owner.project !== project)) continue;
+      for (const [key, tokens] of Object.entries(session.usage || {})) {
+        const [hour, model, fast, us] = key.split('|');
+        if (hour < fromKey || hour >= toKey) continue;
+        if (session.estimatedOutputTokens) estimated = true;
+        const usd = costOf(model, tokens, { fast: fast === 'fast', us: us === 'us' });
+        if (usd === null) unknownModels.add(model);
+        const bkey = `${hour}|${model}|${owner.project}`;
+        const b = buckets.get(bkey) || { hour, model, family: modelFamily(model), project: owner.project, tokens: [0, 0, 0, 0, 0, 0], usd: 0, priced: usd !== null };
+        tokens.forEach((v, i) => (b.tokens[i] += v));
+        b.usd += usd || 0;
+        buckets.set(bkey, b);
+        perSession.set(owner.id, (perSession.get(owner.id) || 0) + (usd || 0));
+      }
+    }
+    const subIdx = this.subagentIndex();
+    const top = [...perSession.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([id, usd]) => {
+      const v = this.view(parents.get(id), Date.now(), subIdx);
+      return { id, usd, title: v.displayTitle, project: v.project, start: v.start };
+    });
+    return { buckets: [...buckets.values()], topSessions: top, unknownModels: [...unknownModels], estimated };
   }
 
   getRaw(id) {
@@ -149,11 +211,23 @@ export class Store {
     return { ...heuristicSummary(session), stale: false };
   }
 
-  view(session, now = Date.now()) {
+  view(session, now = Date.now(), subIdx = this.subagentIndex()) {
     const sum = this.summaryFor(session);
     const hook = this.hooks.get(session.id);
+    const subs = subIdx.get(session.id) || [];
+    const own = sessionCost(session.usage);
+    const subCosts = subs.map((x) => sessionCost(x.usage));
+    const unknown = new Set([...own.unknownModels, ...subCosts.flatMap((c) => c.unknownModels)]);
     return {
       ...session,
+      // API 換算コスト(USD)。サブエージェント分を含む。単価不明のモデル分は含まない
+      cost: {
+        usd: own.usd + subCosts.reduce((t, c) => t + c.usd, 0),
+        subagentUsd: subCosts.reduce((t, c) => t + c.usd, 0),
+        subagents: subs.length,
+        unknownModels: [...unknown],
+        estimatedOutputTokens: (session.estimatedOutputTokens || 0) + subs.reduce((t, x) => t + (x.estimatedOutputTokens || 0), 0),
+      },
       status: deriveStatus(hook, session.end, now),
       hook: hook && { startedAt: hook.startedAt, source: hook.source, endedAt: hook.endedAt, endReason: hook.endReason, lastEvent: hook.lastEvent, lastEventAt: hook.lastEventAt },
       displayTitle: sum.title || session.title,
@@ -166,8 +240,9 @@ export class Store {
   }
 
   sessions(now = Date.now()) {
+    const subIdx = this.subagentIndex();
     return this.rawSessions()
-      .map((s) => this.view(s, now))
+      .map((s) => this.view(s, now, subIdx))
       .sort((a, b) => Date.parse(b.start) - Date.parse(a.start));
   }
 

@@ -15,6 +15,14 @@
       <button id="next" title="次の週">›</button>
       <span id="range" class="range"></span>
     </div>
+    <div class="tabs" role="tablist">
+      <button id="tab-calendar" role="tab" aria-selected="true">カレンダー</button>
+      <button id="tab-cost" role="tab" aria-selected="false">コスト</button>
+    </div>
+    <div class="seg" id="cost-range" hidden>
+      <button data-range="week" aria-pressed="true">週</button>
+      <button data-range="month" aria-pressed="false">月</button>
+    </div>
     <div class="filters">
       <input id="q" type="search" placeholder="キーワード検索(全期間)">
       <select id="project"><option value="">すべてのプロジェクト</option></select>
@@ -32,6 +40,8 @@
         <div class="days" id="days"></div>
       </div>
     </section>
+
+    <section class="costs" id="costs" hidden></section>
 
     <aside class="side">
       <div id="search-results" class="search-results" hidden></div>

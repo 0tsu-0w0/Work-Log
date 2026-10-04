@@ -1,3 +1,5 @@
+import { renderCosts } from './costs.js';
+
 const $ = (id) => document.getElementById(id);
 const HOUR_PX = 48;
 const MIN_BLOCK_PX = 14;
@@ -12,6 +14,9 @@ const state = {
   tag: '',
   q: '',
   selectedId: null,
+  view: 'calendar', // calendar | cost
+  costRange: 'week', // week | month
+  monthStart: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
   sessions: [],
   config: null,
 };
@@ -43,6 +48,9 @@ function fmtDuration(ms) {
   const m = Math.round(ms / 60000);
   if (m < 60) return `${m}分`;
   return `${Math.floor(m / 60)}時間${m % 60 ? `${m % 60}分` : ''}`;
+}
+function fmtUsd(v) {
+  return v >= 100 ? `$${v.toFixed(0)}` : v >= 1 ? `$${v.toFixed(2)}` : `$${v.toFixed(3)}`;
 }
 function fmtNum(n) {
   return n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(n);
@@ -190,6 +198,7 @@ function renderWeekStats() {
   $('detail').innerHTML = `
     <div class="stats">
       <h3>今週の作業 ${fmtDuration(total)} · ${state.sessions.length}セッション · ${state.sessions.reduce((n, s) => n + s.commits, 0)}コミット</h3>
+      <p class="small">この週に動いたセッションの API 換算コスト: ${fmtUsd(state.sessions.reduce((n, s) => n + s.cost.usd, 0))}(週をまたぐセッションは全体の額)</p>
       ${rows.map(([name, ms]) => `
         <div class="bar-row">
           <span class="name"><span class="proj-dot" style="background:${projectColor(name)}"></span>${esc(name)}</span>
@@ -253,6 +262,7 @@ async function showDetail(id, { quiet = false } = {}) {
     <p class="meta">ツール: ${esc(tools || 'なし')}</p>
     <p class="meta">トークン: 入力 ${fmtNum(s.tokens.input + s.tokens.cacheRead + s.tokens.cacheCreation)}(キャッシュ読込 ${fmtNum(s.tokens.cacheRead)})/ 出力 ${fmtNum(s.tokens.output)}</p>
     <p class="meta">モデル: ${esc(s.models.join(', ') || '-')}</p>
+    <p class="meta">API 換算コスト: ${fmtUsd(s.cost.usd)}${s.cost.subagents ? `(サブエージェント ${s.cost.subagents}件 ${fmtUsd(s.cost.subagentUsd)} を含む)` : ''}${s.cost.estimatedOutputTokens ? ' · 一部見積もり' : ''}${s.cost.unknownModels.length ? ` · 単価不明: ${esc(s.cost.unknownModels.join(', '))}` : ''}</p>
     ${s.hook ? `<p class="meta">hooks: ${s.hook.source ? `開始 ${esc(SOURCE_LABEL[s.hook.source] || s.hook.source)} · ` : ''}${s.hook.endedAt ? `終了 ${fmtTime(new Date(s.hook.endedAt))}(${esc(END_LABEL[s.hook.endReason] || s.hook.endReason || '-')}) · ` : ''}最終イベント ${esc(s.hook.lastEvent)} ${fmtTime(new Date(s.hook.lastEventAt))}</p>` : ''}
     <p class="meta small">${esc(s.cwd || '')}<br>${esc(s.id)}</p>`;
 
@@ -340,10 +350,79 @@ async function runSearch() {
 }
 
 // ---- イベント ----
-$('prev').onclick = () => { state.weekStart = addDays(state.weekStart, -7); loadWeek(); };
-$('next').onclick = () => { state.weekStart = addDays(state.weekStart, 7); loadWeek(); };
-$('today').onclick = () => { state.weekStart = startOfWeek(new Date()); loadWeek(); };
-$('project').onchange = (e) => { state.project = e.target.value; loadWeek(); runSearch(); };
+// ---- コストビュー ----
+let redrawCosts = null;
+
+function costPeriod() {
+  if (state.costRange === 'month') {
+    const from = state.monthStart;
+    const to = new Date(from.getFullYear(), from.getMonth() + 1, 1);
+    const days = [];
+    for (let d = new Date(from); d < to; d = addDays(d, 1)) days.push(d);
+    return { from, to, days, label: `${from.getFullYear()}年${from.getMonth() + 1}月` };
+  }
+  const days = [...Array(7)].map((_, i) => addDays(state.weekStart, i));
+  return { from: state.weekStart, to: addDays(state.weekStart, 7), days, label: null };
+}
+
+async function loadCosts() {
+  const { from, to, days, label } = costPeriod();
+  const params = new URLSearchParams({ from: from.toISOString(), to: to.toISOString() });
+  if (state.project) params.set('project', state.project);
+  const data = await api(`/api/costs?${params}`);
+  if (label) $('range').textContent = label;
+  redrawCosts = renderCosts($('costs'), data, { days, onSession: (id) => showDetail(id) });
+}
+
+async function refresh() {
+  await loadWeek();
+  if (state.view === 'cost') await loadCosts();
+}
+
+function setView(view) {
+  state.view = view;
+  $('calendar').hidden = view !== 'calendar';
+  $('costs').hidden = view !== 'cost';
+  $('cost-range').hidden = view !== 'cost';
+  $('tab-calendar').setAttribute('aria-selected', String(view === 'calendar'));
+  $('tab-cost').setAttribute('aria-selected', String(view === 'cost'));
+  refresh();
+}
+
+function shiftPeriod(dir) {
+  if (state.view === 'cost' && state.costRange === 'month') {
+    state.monthStart = new Date(state.monthStart.getFullYear(), state.monthStart.getMonth() + dir, 1);
+    state.weekStart = startOfWeek(state.monthStart);
+  } else {
+    state.weekStart = addDays(state.weekStart, 7 * dir);
+    state.monthStart = new Date(state.weekStart.getFullYear(), state.weekStart.getMonth(), 1);
+  }
+  refresh();
+}
+
+$('tab-calendar').onclick = () => setView('calendar');
+$('tab-cost').onclick = () => setView('cost');
+document.querySelectorAll('#cost-range button').forEach((b) => {
+  b.onclick = () => {
+    state.costRange = b.dataset.range;
+    document.querySelectorAll('#cost-range button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+    refresh();
+  };
+});
+let resizeTimer;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => state.view === 'cost' && redrawCosts?.(), 150);
+});
+
+$('prev').onclick = () => shiftPeriod(-1);
+$('next').onclick = () => shiftPeriod(1);
+$('today').onclick = () => {
+  state.weekStart = startOfWeek(new Date());
+  state.monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+  refresh();
+};
+$('project').onchange = (e) => { state.project = e.target.value; refresh(); runSearch(); };
 $('tag').onchange = (e) => { state.tag = e.target.value; loadWeek(); runSearch(); };
 $('q').oninput = (e) => {
   state.q = e.target.value;
@@ -355,9 +434,9 @@ function connectEvents() {
   const es = new EventSource('/api/events');
   es.onopen = () => $('live').classList.add('on');
   es.onerror = () => $('live').classList.remove('on');
-  const refresh = () => { loadWeek(); if (state.q) runSearch(); };
-  es.addEventListener('update', refresh);
-  es.addEventListener('tick', refresh);
+  const onChange = () => { refresh(); if (state.q) runSearch(); };
+  es.addEventListener('update', onChange);
+  es.addEventListener('tick', onChange);
 }
 
 function renderHooksBadge() {
