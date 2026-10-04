@@ -127,6 +127,11 @@ test('HTTP API', async (t) => {
   const detail = await (await fetch(`${base}/api/sessions/${ID}`)).json();
   assert.equal(detail.commits, 1);
   assert.match(detail.firstPrompt, /token=\[REDACTED\]/);
+  // 作業ディレクトリが存在しないときも、ログから抽出したコミットは返す
+  assert.equal(detail.git.available, false);
+  assert.equal(detail.commitList[0].hash, '3f2a1b9');
+  // コミットのハッシュ・件名でも検索できる
+  assert.equal((await (await fetch(`${base}/api/sessions?q=3f2a1b9`)).json()).sessions.length, 1);
 
   const sum = await fetch(`${base}/api/sessions/${ID}/summarize`, { method: 'POST' });
   assert.equal(sum.status, 400); // APIキーなし

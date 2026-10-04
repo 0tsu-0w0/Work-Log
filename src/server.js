@@ -32,7 +32,8 @@ export function filterSessions(sessions, { from, to, project, tag, q } = {}) {
     if (project && s.project !== project) return false;
     if (tag && s.workType !== tag && !s.components.includes(tag)) return false;
     if (needle) {
-      const hay = [s.displayTitle, s.title, s.summary, s.project, s.gitBranch, ...s.prompts, ...s.changedFiles, ...s.components]
+      const commits = (s.commitList || []).flatMap((c) => [c.hash, c.subject]);
+      const hay = [s.displayTitle, s.title, s.summary, s.project, s.gitBranch, ...s.prompts, ...s.changedFiles, ...s.components, ...commits]
         .filter(Boolean).join('\n').toLowerCase();
       if (!hay.includes(needle)) return false;
     }
@@ -76,7 +77,8 @@ export function createServer(store, { env = process.env } = {}) {
     }
     if (req.method === 'GET' && parts[1] === 'sessions' && parts.length === 3) {
       const s = store.sessions().find((x) => x.id === parts[2]);
-      return s ? send(res, 200, out(s)) : send(res, 404, { error: 'not found' });
+      if (!s) return send(res, 404, { error: 'not found' });
+      return send(res, 200, out({ ...s, git: await store.gitFor(s.id) }));
     }
     if (req.method === 'POST' && parts[1] === 'sessions' && parts[3] === 'summarize') {
       if (!llmAvailable(env)) return send(res, 400, { error: 'ANTHROPIC_API_KEY が設定されていないため、LLM要約は使えません' });

@@ -7,8 +7,12 @@ import { parseSessionFile } from './parser.js';
 import { heuristicSummary } from './tagger.js';
 import { summarize } from './summarizer.js';
 import { HookLog, deriveStatus } from './live.js';
+import { sessionGit } from './git.js';
 
-const CACHE_VERSION = 1;
+// Git の情報は外部(手作業のコミットなど)でも変わるので、短時間だけ使い回す
+const GIT_CACHE_MS = 60 * 1000;
+
+const CACHE_VERSION = 2; // 解析結果の形が変わったら上げる(古いキャッシュを捨てて再解析させる)
 
 export { defaultPaths };
 
@@ -43,6 +47,7 @@ export class Store {
     this.summaries = {}; // sessionId -> { fingerprint, ...summary }
     this.loaded = false;
     this.scanning = null;
+    this.gitCache = new Map(); // sessionId -> { key, at, promise }
   }
 
   async load() {
@@ -164,6 +169,18 @@ export class Store {
     return this.rawSessions()
       .map((s) => this.view(s, now))
       .sort((a, b) => Date.parse(b.start) - Date.parse(a.start));
+  }
+
+  async gitFor(id, { now = Date.now() } = {}) {
+    const raw = this.getRaw(id);
+    if (!raw) return null;
+    const session = this.view(raw, now);
+    const key = `${fingerprint(session)}|${session.status}`;
+    const hit = this.gitCache.get(id);
+    if (hit && hit.key === key && now - hit.at < GIT_CACHE_MS) return hit.promise;
+    const promise = sessionGit(session, { now }).catch((err) => ({ available: false, reason: 'error', error: err.message }));
+    this.gitCache.set(id, { key, at: now, promise });
+    return promise;
   }
 
   // 同じ内容のセッションは再要約しない(force 指定時を除く)

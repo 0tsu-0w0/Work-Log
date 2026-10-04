@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseSessionFile, buildSegments, projectNameFrom } from '../src/parser.js';
+import { parseSessionFile, parseSessionText, buildSegments, projectNameFrom, parseCommitOutput, gitCommandKind } from '../src/parser.js';
 import { classifyWorkType, inferComponents, heuristicSummary } from '../src/tagger.js';
 import { mask } from '../src/mask.js';
 
@@ -20,11 +20,15 @@ test('セッションログを集計する', async () => {
   // メタ行とtool_resultはプロンプトに数えない
   assert.equal(s.userMessages, 2);
   // 同じ message.id の分割行は1件
-  assert.equal(s.assistantMessages, 4);
-  assert.equal(s.messageCount, 6);
+  assert.equal(s.assistantMessages, 5);
+  assert.equal(s.messageCount, 7);
+  // 失敗したコミット(nothing to commit)は数えない
   assert.equal(s.commits, 1);
+  assert.equal(s.commitAttempts, 2);
+  assert.deepEqual(s.commitList, [{ hash: '3f2a1b9', branch: 'feature/login', subject: 'fix login', at: '2026-09-28T01:10:05.000Z' }]);
+  assert.equal(s.pushes, 1);
   assert.deepEqual(s.changedFiles, ['src/auth/login.ts', 'src/auth/login.test.ts', 'README.md']);
-  assert.deepEqual(s.toolCalls, { Edit: 2, Write: 1, Bash: 1 });
+  assert.deepEqual(s.toolCalls, { Edit: 2, Write: 1, Bash: 3 });
   assert.equal(s.tokens.input, 110); // msg_1 の usage は重複加算しない
   assert.equal(s.tokens.cacheRead, 1000);
   assert.deepEqual(s.models, ['claude-sonnet-5-5']);
@@ -61,4 +65,39 @@ test('秘匿情報をマスキングする', () => {
   assert.equal(mask('https://user:pass@example.com/x'), 'https://[CREDENTIALS]@example.com/x');
   assert.equal(mask('mail me@example.com'), 'mail [EMAIL]');
   assert.equal(mask('普通の文章'), '普通の文章');
+});
+
+test('git commit の出力からハッシュを読み取る', () => {
+  assert.deepEqual(parseCommitOutput('[main (root-commit) abcdef1] init\n 1 file changed'), [{ hash: 'abcdef1', branch: 'main', subject: 'init' }]);
+  assert.deepEqual(parseCommitOutput('[detached HEAD 1234567] wip'), [{ hash: '1234567', branch: 'detached HEAD', subject: 'wip' }]);
+  assert.deepEqual(parseCommitOutput('hint: [main] nope\n * [new branch] a -> a'), []);
+});
+
+test('実行された git commit / push だけを数える', () => {
+  assert.deepEqual(gitCommandKind('git add -A && git commit -m "x" && git push'), { commit: true, push: true });
+  assert.deepEqual(gitCommandKind('cd repo; git -c user.name=a commit -q'), { commit: true, push: false });
+  assert.deepEqual(gitCommandKind("git commit -q -F - <<'EOF'\nmsg mentions git push\nEOF"), { commit: true, push: false });
+  // スクリプトや文字列の中の "git commit" は数えない
+  assert.deepEqual(gitCommandKind("python3 - <<'EOF'\ns = 'git commit -m x'\nEOF"), { commit: false, push: false });
+  assert.deepEqual(gitCommandKind('echo "run git commit later"'), { commit: false, push: false });
+  assert.deepEqual(gitCommandKind('grep -n "git push" README.md'), { commit: false, push: false });
+});
+
+test('-q でハッシュが出ないコミットは成功時刻を記録する', () => {
+  const line = (o) => JSON.stringify({ sessionId: 's', cwd: '/r', ...o });
+  const text = [
+    line({ type: 'user', timestamp: '2026-09-28T01:00:00Z', message: { role: 'user', content: 'コミットして' } }),
+    line({ type: 'assistant', timestamp: '2026-09-28T01:00:05Z', message: { id: 'a', content: [
+      { type: 'tool_use', id: 'q1', name: 'Bash', input: { command: 'git commit -q -m ok' } },
+      { type: 'tool_use', id: 'q2', name: 'Bash', input: { command: 'git commit -q -m ng' } },
+    ] } }),
+    line({ type: 'user', timestamp: '2026-09-28T01:00:06Z', message: { role: 'user', content: [
+      { type: 'tool_result', tool_use_id: 'q1', content: '' },
+      { type: 'tool_result', tool_use_id: 'q2', is_error: true, content: 'nothing to commit' },
+    ] } }),
+  ].join('\n');
+  const s = parseSessionText(text, { file: '/x/s.jsonl' });
+  assert.equal(s.commits, 1);
+  assert.deepEqual(s.quietCommits, ['2026-09-28T01:00:06Z']);
+  assert.deepEqual(s.commitList, []);
 });

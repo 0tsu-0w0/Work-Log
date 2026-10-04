@@ -189,7 +189,7 @@ function renderWeekStats() {
   const max = Math.max(...rows.map((r) => r[1]), 1);
   $('detail').innerHTML = `
     <div class="stats">
-      <h3>今週の作業 ${fmtDuration(total)} · ${state.sessions.length}セッション</h3>
+      <h3>今週の作業 ${fmtDuration(total)} · ${state.sessions.length}セッション · ${state.sessions.reduce((n, s) => n + s.commits, 0)}コミット</h3>
       ${rows.map(([name, ms]) => `
         <div class="bar-row">
           <span class="name"><span class="proj-dot" style="background:${projectColor(name)}"></span>${esc(name)}</span>
@@ -236,7 +236,7 @@ async function showDetail(id, { quiet = false } = {}) {
     <p class="meta"><span class="proj-dot" style="background:${projectColor(s.project)}"></span>${esc(s.project)}${s.gitBranch ? ` · ${esc(s.gitBranch)}` : ''}</p>
     <p class="meta">${fmtDate(start)} ${fmtTime(start)} 〜 ${s.status === 'working' ? '現在' : (sameDay(start, end) ? '' : fmtDate(end) + ' ') + fmtTime(end)}(作業 ${fmtDuration(s.activeMs)})</p>
     <div class="kv">
-      <div><b>${s.commits}</b><span>コミット</span></div>
+      <div><b>${s.git?.available ? s.git.totals.commits : s.commits}</b><span>コミット</span>${s.git?.available && s.git.totals.commits ? `<span class="diffstat"><ins>+${s.git.totals.insertions}</ins> <del>−${s.git.totals.deletions}</del></span>` : ''}</div>
       <div><b>${s.changedFiles.length}</b><span>変更ファイル</span></div>
       <div><b>${s.messageCount}</b><span>メッセージ</span></div>
     </div>
@@ -246,6 +246,7 @@ async function showDetail(id, { quiet = false } = {}) {
     </div>
     <div class="summary" id="summary">${esc(s.summary)}</div>
     ${llm ? '' : '<p class="small">ANTHROPIC_API_KEY を設定して起動すると、LLMで要約できます。</p>'}
+    ${renderGit(s)}
     ${s.changedFiles.length ? `<div class="section-title">変更ファイル</div><ul class="files">${s.changedFiles.map((f) => `<li>${esc(f)}</li>`).join('')}</ul>` : ''}
     ${s.firstPrompt ? `<div class="section-title">最初の依頼</div><div class="prompt">${esc(s.firstPrompt)}</div>` : ''}
     <div class="section-title">詳細</div>
@@ -281,6 +282,31 @@ async function showDetail(id, { quiet = false } = {}) {
       }
     };
   }
+}
+
+const GIT_REASON = { 'not-repo': 'Git リポジトリではありません', 'no-git': 'git コマンドが見つかりません', 'no-cwd': '作業ディレクトリが不明です', error: 'Git の読み取りに失敗しました' };
+
+function renderGit(s) {
+  const g = s.git;
+  if (!g) return '';
+  if (!g.available) {
+    // ログ上のコミットだけでも見せる(別のマシンのログ、リポジトリ削除済みなど)
+    if (!s.commitList.length) return `<div class="section-title">Git</div><p class="small">${esc(GIT_REASON[g.reason] || g.reason)}</p>`;
+    return `<div class="section-title">コミット <span class="small">${esc(GIT_REASON[g.reason] || '')}・ログから抽出</span></div>
+      <ul class="commits">${s.commitList.map((c) => `<li><code>${esc(c.hash)}</code> ${esc(c.subject)}</li>`).join('')}</ul>`;
+  }
+  const rows = g.commits.map((c) => {
+    const hash = c.url ? `<a href="${esc(c.url)}" target="_blank" rel="noopener noreferrer"><code>${esc(c.short)}</code></a>` : `<code>${esc(c.short)}</code>`;
+    const src = c.source === 'claude' ? '<span class="src claude" title="Claude が実行した git commit">Claude</span>' : '<span class="src time" title="セッション中に同じ作者が作成したコミット">同時間帯</span>';
+    return `<li title="${esc(c.files.join('\n'))}">
+      <div>${hash} ${src} ${esc(c.subject)}</div>
+      <div class="small">${fmtTime(new Date(c.commitDate))} · ${esc(c.author)} · ${c.files.length}ファイル <ins>+${c.insertions}</ins> <del>−${c.deletions}</del></div>
+    </li>`;
+  });
+  const missing = g.missing.map((c) => `<li class="gone" title="amend・rebase などで書き換えられたか、このマシンのリポジトリにありません"><div><code>${esc(c.hash)}</code> <span class="src">見つかりません</span> ${esc(c.subject)}</div></li>`);
+  const repo = g.webBase ? `<a href="${esc(g.webBase)}" target="_blank" rel="noopener noreferrer">${esc(g.webBase.replace(/^https:\/\//, ''))}</a>` : esc(g.root);
+  return `<div class="section-title">コミット <span class="small">${repo}</span></div>
+    ${rows.length || missing.length ? `<ul class="commits">${rows.join('')}${missing.join('')}</ul>` : '<p class="small">このセッションの時間帯のコミットはありません。</p>'}`;
 }
 
 // ---- キーワード検索(全期間) ----

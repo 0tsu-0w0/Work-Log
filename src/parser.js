@@ -6,6 +6,32 @@ import path from 'node:path';
 export const SEGMENT_GAP_MS = 30 * 60 * 1000;
 
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
+// コマンドの先頭か、&& ; || | ( の直後に現れる git だけを数える
+const GIT_COMMIT_RE = /(?:^|[;&|(\n])\s*git\s+(?:-[cC]\s+\S+\s+)*commit\b/;
+const GIT_PUSH_RE = /(?:^|[;&|(\n])\s*git\s+(?:-[cC]\s+\S+\s+)*push\b/;
+// ヒアドキュメントの本文(スクリプトやコミットメッセージ)の中の "git commit" は実行ではない
+const HEREDOC_RE = /<<-?\s*(['"]?)(\w+)\1[^\n]*\n[\s\S]*?\n\s*\2(?=\s*$|\n)/gm;
+
+export function gitCommandKind(command) {
+  const cmd = command.replace(HEREDOC_RE, '');
+  return { commit: GIT_COMMIT_RE.test(cmd), push: GIT_PUSH_RE.test(cmd) };
+}
+// git commit の出力 "[main 1a2b3c4] メッセージ"、"[main (root-commit) 1a2b3c4] …"、"[detached HEAD 1a2b3c4] …"
+const COMMIT_LINE_RE = /^\[(.+?) ([0-9a-f]{7,40})\] (.*)$/gm;
+
+export function parseCommitOutput(text) {
+  const out = [];
+  for (const m of text.matchAll(COMMIT_LINE_RE)) {
+    out.push({ hash: m[2], branch: m[1].replace(/ \(root-commit\)$/, ''), subject: m[3].trim() });
+  }
+  return out;
+}
+
+function toolResultText(c) {
+  if (typeof c.content === 'string') return c.content;
+  return Array.isArray(c.content) ? c.content.filter((x) => x?.type === 'text').map((x) => x.text).join('\n') : '';
+}
+
 const NOISE_PREFIXES = ['<command-', '<local-command-', '<system-reminder>', 'Caveat:', '[Request interrupted'];
 
 function textOf(content) {
@@ -57,12 +83,16 @@ export function parseSessionText(text, { file = '', projectDir = '' } = {}) {
     toolCalls: {},
     changedFiles: new Set(),
     commands: [],
-    commits: 0,
+    commitAttempts: 0,
+    commits: new Map(), // hash -> { hash, branch, subject, at }
+    quietCommits: [], // 成功したがハッシュが出力されなかった(-q など)コミットの時刻
+    pushes: 0,
     models: new Set(),
     tokens: { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 },
   };
   const timestamps = [];
   const seenMessageIds = new Set();
+  const gitToolUses = new Map(); // tool_use id -> { commit, push }
 
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
@@ -86,6 +116,19 @@ export function parseSessionText(text, { file = '', projectDir = '' } = {}) {
       if (isRealPrompt(e)) {
         s.userMessages++;
         s.prompts.push(textOf(e.message.content).trim());
+      }
+      // git commit / push の結果から、実際に成功したものだけを拾う
+      for (const c of Array.isArray(e.message?.content) ? e.message.content : []) {
+        const kind = c?.type === 'tool_result' && gitToolUses.get(c.tool_use_id);
+        if (!kind) continue;
+        if (kind.push && !c.is_error) s.pushes++;
+        if (kind.commit) {
+          const found = parseCommitOutput(toolResultText(c));
+          for (const cm of found) {
+            if (!s.commits.has(cm.hash)) s.commits.set(cm.hash, { ...cm, at: e.timestamp || null });
+          }
+          if (!found.length && !c.is_error && e.timestamp) s.quietCommits.push(e.timestamp);
+        }
       }
       continue;
     }
@@ -116,7 +159,9 @@ export function parseSessionText(text, { file = '', projectDir = '' } = {}) {
       }
       if (c.name === 'Bash' && typeof input.command === 'string') {
         s.commands.push(input.command);
-        s.commits += (input.command.match(/\bgit\s+(?:-c\s+\S+\s+)*commit\b/g) || []).length;
+        const kind = gitCommandKind(input.command);
+        if (kind.commit) s.commitAttempts++;
+        if (kind.commit || kind.push) gitToolUses.set(c.id, kind);
       }
     }
   }
@@ -148,7 +193,12 @@ export function parseSessionText(text, { file = '', projectDir = '' } = {}) {
     toolCalls: s.toolCalls,
     changedFiles,
     commands: s.commands.slice(-50).map((c) => c.slice(0, 300)),
-    commits: s.commits,
+    // 出力でハッシュを確認できたコミット + 成功したがハッシュが出なかったコミット
+    commits: s.commits.size + s.quietCommits.length,
+    commitList: [...s.commits.values()],
+    quietCommits: s.quietCommits,
+    commitAttempts: s.commitAttempts,
+    pushes: s.pushes,
     models: [...s.models],
     tokens: s.tokens,
   };
