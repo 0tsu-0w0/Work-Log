@@ -284,3 +284,47 @@ export function sessionEndTeams(s, { includeCost = false } = {}) {
 export function plainFromTeams(text) {
   return text.replace(/\*\*/g, '').replace(/\[([^\]]*)\]\(([^)]+)\)/g, '$1 ($2)');
 }
+
+// ---------------------------------------------------------------- Google Chat
+// テキストメッセージ(*太字*、<URL|名前> のリンク)。Chat には記号を逃がす書き方がないので、
+// 書式やメンション(<users/all> など)として解釈される記号は全角に置き換える。
+// メッセージ全体は 32,000 バイトまで(Chat API の Message の説明)なので、収まるようにセッション一覧を削る
+const GCHAT_MAX_BYTES = 30000;
+const GCHAT_FULL = { '*': '＊', _: '＿', '~': '～', '`': '｀', '<': '＜', '>': '＞', '|': '｜' };
+const gEsc = (s) => String(s ?? '').replace(/\r?\n/g, ' ').replace(/[*_~`<>|]/g, (c) => GCHAT_FULL[c]);
+const gLink = (label, url) => (url && /^https?:\/\//.test(url) ? `<${String(url).replace(/[<>|\s]/g, encodeURIComponent)}|${gEsc(label)}>` : gEsc(label));
+
+export function toGoogleChat(report, { includeCost = false, maxSessions = 20 } = {}) {
+  const { totals, range } = report;
+  const time = (iso) => new Intl.DateTimeFormat('ja-JP', { timeZone: range.timeZone, ...(range.period === 'week' ? { month: 'numeric', day: 'numeric' } : {}), hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
+  const summary = report.sessions.length
+    ? `作業 ${dur(totals.activeMs)}・${totals.sessions}セッション・${totals.commits}コミット${includeCost && totals.usd != null ? `・API 換算 $${totals.usd.toFixed(2)}` : ''}`
+    : 'この期間の作業はありません。';
+  const head = [`*Work Log ${title(range)}*\n${summary}`];
+  if (report.projects.length) head.push(['*プロジェクト別*', ...report.projects.map((p) => `• ${gEsc(p.project)}  ${dur(p.activeMs)}(${p.sessions}セッション・${p.commits}コミット)`)].join('\n'));
+  if (report.tasks.length) head.push(['*タスク*', ...report.tasks.map((t) => `• ${gLink(t.label, t.url)}${t.issue ? ` ${gEsc(t.issue.title)}(${gEsc(t.issue.stateLabel)})` : ''}  ${dur(t.activeMs)}`)].join('\n'));
+  const lines = report.sessions.map((s) => `• ${time(s.start)} ${gEsc(s.title)} — ${gEsc(s.project)}・${dur(s.activeMs)}${s.commits ? `・${s.commits}コミット` : ''}${s.tool === 'codex' ? '(Codex)' : ''}`);
+  const build = (n) => {
+    const parts = [...head];
+    if (lines.length) parts.push(['*セッション*', ...lines.slice(0, n), ...(lines.length > n ? [`ほか ${lines.length - n} セッション`] : [])].join('\n'));
+    return parts.join('\n\n');
+  };
+  let n = Math.min(maxSessions, lines.length);
+  let text = build(n);
+  // 32,000 バイトを超えるなら、セッションを後ろから減らす
+  while (Buffer.byteLength(JSON.stringify({ text })) > GCHAT_MAX_BYTES && n > 0) text = build((n = Math.max(0, n - 5)));
+  return { text, preview: text };
+}
+
+export function sessionEndGoogleChat(s, { includeCost = false } = {}) {
+  const parts = [gEsc(s.project), dur(s.activeMs), `${s.commits}コミット`];
+  if (s.tool === 'codex') parts.push('Codex');
+  if (includeCost && s.cost) parts.push(`API 換算 $${s.cost.usd.toFixed(2)}`);
+  const tasks = (s.tasks || []).map((t) => gLink(t.label, t.url));
+  return { text: [`*セッション終了: ${gEsc(s.displayTitle || s.title)}*`, parts.join('・'), ...(tasks.length ? [`タスク: ${tasks.join(', ')}`] : [])].join('\n') };
+}
+
+// Google Chat の書式をプレーンテキストに戻す(画面のプレビュー用)
+export function plainFromGoogleChat(text) {
+  return text.replace(/\*/g, '').replace(/<([^|>]+)\|([^>]+)>/g, '$2 ($1)');
+}

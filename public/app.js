@@ -417,11 +417,11 @@ const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 // 画面の自動更新で描き直しても、送った結果の表示は残す
 let slackSent = null;
-const DEST_LABEL = { slack: 'Slack', discord: 'Discord', teams: 'Teams' };
+const DEST_LABEL = { slack: 'Slack', discord: 'Discord', teams: 'Teams', googlechat: 'Google Chat' };
 
 function sendButtons() {
-  const dests = ['slack', 'discord', 'teams'].filter((t) => state.config?.[t]?.configured);
-  if (!dests.length) return '<p class="small">SLACK_WEBHOOK_URL・DISCORD_WEBHOOK_URL・TEAMS_WEBHOOK_URL を設定すると、日報・週報を送れます。</p>';
+  const dests = Object.keys(DEST_LABEL).filter((t) => state.config?.[t]?.configured);
+  if (!dests.length) return '<p class="small">SLACK_WEBHOOK_URL・DISCORD_WEBHOOK_URL・TEAMS_WEBHOOK_URL・GOOGLE_CHAT_WEBHOOK_URL を設定すると、日報・週報を送れます。</p>';
   return (
     dests
       .map((t) => `<div class="slack-send"><span class="small">${DEST_LABEL[t]}(${esc(state.config[t].destination)})に送る</span>

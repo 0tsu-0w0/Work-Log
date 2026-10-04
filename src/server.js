@@ -11,7 +11,10 @@ export { filterSessions };
 import { llmAvailable, DEFAULT_MODEL } from './summarizer.js';
 import { SERVER_FILE } from './hook.js';
 import { PRICING_AS_OF, PRICING_SOURCE } from './pricing.js';
-import { plainFromMrkdwn, plainFromDiscord, plainFromTeams } from './report.js';
+import { plainFromMrkdwn, plainFromDiscord, plainFromTeams, plainFromGoogleChat } from './report.js';
+
+// 送り先ごとの書式を、画面のプレビュー用のプレーンテキストに戻す
+const PLAIN = { slack: plainFromMrkdwn, discord: plainFromDiscord, teams: plainFromTeams, googlechat: plainFromGoogleChat };
 import { status as hooksStatus, settingsPath } from './install.js';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
@@ -61,6 +64,7 @@ export function createServer(store, { env = process.env } = {}) {
         slack: store.slack.status(),
         discord: store.discord.status(),
         teams: store.teams.status(),
+        googlechat: store.googleChat.status(),
       });
     }
     if (req.method === 'GET' && parts[1] === 'sessions' && parts.length === 2) {
@@ -117,7 +121,7 @@ export function createServer(store, { env = process.env } = {}) {
       try {
         if (req.method === 'GET') {
           const r = await store.report({ ...Object.fromEntries(url.searchParams), ...(fixed ? { target: fixed } : {}) });
-          const previewText = r.target === 'discord' ? plainFromDiscord(r.preview) : r.target === 'teams' ? plainFromTeams(r.preview) : plainFromMrkdwn(r.preview);
+          const previewText = (PLAIN[r.target] || plainFromMrkdwn)(r.preview);
           return send(res, 200, { target: r.target, preview: r.preview, previewText, hash: r.hash, totals: r.totals, status: r.status, slack: r.status, range: { period: r.range.period, start: r.range.start } });
         }
         if (req.method === 'POST') {

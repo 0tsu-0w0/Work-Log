@@ -16,13 +16,15 @@ import { buildWorkLog } from './worklog.js';
 import { Slack } from './slack.js';
 import { Discord } from './discord.js';
 import { Teams } from './teams.js';
-import { periodRange, buildReport, toSlack, sessionEndMessage, toDiscord, sessionEndDiscord, toTeams, sessionEndTeams, validTimeZone, todayIn } from './report.js';
+import { GoogleChat } from './googlechat.js';
+import { periodRange, buildReport, toSlack, sessionEndMessage, toDiscord, sessionEndDiscord, toTeams, sessionEndTeams, toGoogleChat, sessionEndGoogleChat, validTimeZone, todayIn } from './report.js';
 
 // 日報・週報と通知の送り先ごとの書式
 const FORMATS = {
   slack: { report: toSlack, sessionEnd: sessionEndMessage },
   discord: { report: toDiscord, sessionEnd: sessionEndDiscord },
   teams: { report: toTeams, sessionEnd: sessionEndTeams },
+  googlechat: { report: toGoogleChat, sessionEnd: sessionEndGoogleChat },
 };
 import { remoteWebBase, webBaseFromRemote } from './git.js';
 import { filterSessions } from './filter.js';
@@ -57,11 +59,12 @@ export function fingerprint(session) {
 }
 
 export class Store {
-  constructor({ projectsDir, cacheDir, codexDir = null, github = null, slack = null, discord = null, teams = null } = defaultPaths()) {
+  constructor({ projectsDir, cacheDir, codexDir = null, github = null, slack = null, discord = null, teams = null, googleChat = null } = defaultPaths()) {
     this.slack = slack || new Slack();
     this.discord = discord || new Discord();
     this.teams = teams || new Teams();
-    this.destinations = { slack: this.slack, discord: this.discord, teams: this.teams };
+    this.googleChat = googleChat || new GoogleChat();
+    this.destinations = { slack: this.slack, discord: this.discord, teams: this.teams, googlechat: this.googleChat };
     this.slackNotifiedFile = path.join(cacheDir, 'slack-notified.json');
     this.trackers = new Trackers({ cacheDir, github });
     this.github = this.trackers.github;
@@ -104,6 +107,7 @@ export class Store {
     this.slack.setConfig(json.slack || {});
     this.discord.setConfig(json.discord || {});
     this.teams.setConfig(json.teams || {});
+    this.googleChat.setConfig(json.googlechat || {});
   }
 
   // 利用者の単価表(任意)。読めなければ組み込みの単価だけを使う
@@ -413,11 +417,11 @@ export class Store {
   }
 
   destination(target) {
-    const name = ['discord', 'teams'].includes(target) ? target : 'slack';
+    const name = Object.hasOwn(FORMATS, target) ? target : 'slack';
     return { name, dest: this.destinations[name], fmt: FORMATS[name] };
   }
 
-  // 日報・週報。params: { target: 'slack' | 'discord' | 'teams', period: 'day' | 'week', date: 'YYYY-MM-DD', tz }
+  // 日報・週報。params: { target: 'slack' | 'discord' | 'teams' | 'googlechat', period: 'day' | 'week', date: 'YYYY-MM-DD', tz }
   async report({ target = 'slack', period = 'day', date, tz, waitMs = 1500 } = {}) {
     const { name, dest, fmt } = this.destination(target);
     const timeZone = validTimeZone(tz);

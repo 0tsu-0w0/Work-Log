@@ -3,7 +3,7 @@
 //   work-log                 サーバーを起動 (http://127.0.0.1:4317)
 //   work-log scan            ログを解析してセッション一覧を表示
 //   work-log summarize [ID]  LLMで要約(IDを省略すると未要約のものをすべて)
-//   work-log report [--week] [--date YYYY-MM-DD] [--slack] [--discord] [--teams]  日報・週報を表示(各オプションで送る)
+//   work-log report [--week] [--date YYYY-MM-DD] [--slack] [--discord] [--teams] [--google-chat]  日報・週報を表示(各オプションで送る)
 //   work-log hooks install   Claude Code の hooks に登録(uninstall / status も可)
 //   work-log hook            hooks から呼ばれる受け口(手動では使わない)
 import { defaultPaths } from './paths.js';
@@ -85,12 +85,13 @@ if (cmd === 'scan') {
   const { plainFromMrkdwn } = await import('./report.js');
   try {
     const params = { period: args.includes('--week') ? 'week' : 'day', date: flag('date'), tz: flag('tz') || process.env.TZ, waitMs: 8000 };
-    const targets = ['slack', 'discord', 'teams'].filter((t) => args.includes(`--${t}`));
+    const FLAGS = { slack: '--slack', discord: '--discord', teams: '--teams', googlechat: '--google-chat' };
+    const targets = Object.keys(FLAGS).filter((t) => args.includes(FLAGS[t]));
     console.log(plainFromMrkdwn((await store.report({ ...params, target: 'slack' })).preview));
     for (const t of targets) {
       const r = await store.report({ ...params, target: t });
       const sent = await store.destinations[t].post(r.message);
-      console.log(`${{ slack: 'Slack', discord: 'Discord', teams: 'Teams' }[t]} に送りました${sent.url ? `: ${sent.url}` : ''}`);
+      console.log(`${{ slack: 'Slack', discord: 'Discord', teams: 'Teams', googlechat: 'Google Chat' }[t]} に送りました${sent.url ? `: ${sent.url}` : ''}`);
     }
   } catch (err) {
     console.error(err.message);
