@@ -1,6 +1,6 @@
 # Work Log
 
-Claude Code の作業履歴を `~/.claude/projects/` 配下の JSONL から自動で収集し、週カレンダーで可視化するローカル Web アプリです。OpenAI Codex CLI のログ(`~/.codex/sessions/`)にも対応しています。「いつ、どのプロジェクトで何をしていたか」を一目で確認できます。
+Claude Code の作業履歴を `~/.claude/projects/` 配下の JSONL から自動で収集し、週カレンダーで可視化するローカル Web アプリです。OpenAI Codex CLI のログ(`~/.codex/sessions/`)にも対応し、Gemini CLI・GitHub Copilot CLI・Aider・Cursor のログも読めます。「いつ、どのプロジェクトで何をしていたか」を一目で確認できます。
 
 ![週ビューと詳細パネル](docs/screenshot.png)
 
@@ -8,11 +8,13 @@ Claude Code の作業履歴を `~/.claude/projects/` 配下の JSONL から自�
 
 - 依存パッケージなし(Node.js 20 以上)
 - `127.0.0.1` のみで待ち受け。Host が `127.0.0.1` / `localhost` 以外の要求は断ります(DNS リバインディング対策)。書き込み系(POST)は、自分以外の Origin からの要求を断ります(他サイトからの CSRF 対策)。hooks からの通知は Origin を付けないので通ります
-- ログは外部に送信しません。LLM 要約だけはオプトインで、送信前に秘匿情報をマスキングします。課題管理サービス(GitHub / GitLab / Linear / Jira / Backlog / Notion)の課題の情報取得とコメント投稿も任意で、取得はタスクIDの検出結果をもとに各サービスの API へ問い合わせるだけです(「課題管理サービス連携」を参照)。Slack / Discord / Teams / Google Chat への日報・週報の送信も任意で、送るのは利用者が操作したとき(または通知を設定したとき)だけです(「Slack / Discord / Teams / Google Chat 連携」を参照)
-- Claude Code と Codex CLI の両方のログを、同じカレンダーとコストの画面で扱います(ツールで絞り込めます)
+- ログは外部に送信しません。LLM 要約だけはオプトインで、送信前に秘匿情報をマスキングします。課題管理サービス(GitHub / GitLab / Linear / Jira / Backlog / Notion)の課題の情報取得とコメント投稿も任意で、取得はタスクIDの検出結果をもとに各サービスの API へ問い合わせるだけです(「課題管理サービス連携」を参照)。Slack / Discord / Teams / Google Chat / Chatwork / Mattermost / Rocket.Chat / LINE WORKS / 汎用 Webhook / Confluence / esa / Qiita Team / Obsidian への日報・週報の送信も任意で、送るのは利用者が操作したとき(または通知を設定したとき)だけです(「送り先連携」を参照)。Google カレンダー・Toggl Track・Clockify・Harvest への記録も任意で、確認してから送ります(「カレンダーと工数管理」を参照)
+- Claude Code、Codex CLI、Gemini CLI、Copilot CLI、Aider、Cursor のログを、同じカレンダーとコストの画面で扱います(ツールで絞り込めます。「他のツールのログ」を参照)
 - ログの変更をファイル監視で検知し、画面を自動更新します
 - Claude Code の hooks に登録すると、作業中・入力待ちの状態をリアルタイムに表示します(任意)
-- 日報・週報を Slack や Discord、Microsoft Teams、Google Chat に送れます。セッション終了の通知も任意で設定できます(Slack / Discord / Teams / Google Chat 連携)
+- 日報・週報を Slack や Discord、Microsoft Teams、Google Chat、Chatwork、Mattermost、Rocket.Chat、LINE WORKS、汎用 Webhook、Confluence、esa、Qiita Team、Obsidian に送れます。セッション終了の通知も任意で設定できます(送り先連携)
+- 作業のセッションを `.ics` に書き出したり、Google カレンダー・Toggl Track・Clockify・Harvest に記録したりできます(カレンダーと工数管理)
+- 送り先・ログの取り込み元・記録先は、それぞれ 1 つの一覧(`src/destinations.js` / `src/sources.js` / `src/sync/index.js`)に 1 項目足せば増やせます(「ディレクトリ構成」を参照)
 
 ## 使い方
 
@@ -25,12 +27,23 @@ node src/cli.js summarize ID --force   # 要約済みでも再生成
 node src/cli.js hooks install      # Claude Code の hooks に登録 (hooks 連携を参照)
 node src/cli.js hooks status       # 登録状況を表示
 node src/cli.js hooks uninstall    # 登録を削除
-node src/cli.js report             # 今日の日報をターミナルに表示 (Slack / Discord / Teams / Google Chat 連携を参照)
+node src/cli.js report             # 今日の日報をターミナルに表示 (送り先連携を参照)
 node src/cli.js report --week      # 今週の週報を表示
 node src/cli.js report --slack     # 表示して、Slack にも送る
 node src/cli.js report --discord   # 表示して、Discord にも送る (--slack と併用可)
 node src/cli.js report --teams     # 表示して、Teams にも送る (--slack / --discord と併用可)
 node src/cli.js report --google-chat  # 表示して、Google Chat にも送る (他の送り先と併用可)
+node src/cli.js report --chatwork  # 表示して、Chatwork にも送る (他の送り先と併用可)
+node src/cli.js report --mattermost  # Mattermost へ (同上)
+node src/cli.js report --rocketchat  # Rocket.Chat へ (同上)
+node src/cli.js report --lineworks   # LINE WORKS へ (同上)
+node src/cli.js report --webhook     # 汎用 Webhook へ JSON で (同上)
+node src/cli.js report --confluence  # Confluence のページに保存 (同上)
+node src/cli.js report --esa         # esa の記事に保存 (同上)
+node src/cli.js report --qiita-team  # Qiita Team の記事に保存 (同上)
+node src/cli.js report --obsidian    # Obsidian の Vault にノートとして保存 (同上)
+node src/cli.js ical [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--out file]  # 作業を .ics に書き出す (省くと過去 30 日、標準出力へ。カレンダーと工数管理を参照)
+node src/cli.js sync --gcal|--toggl|--clockify|--harvest [--week] [--date YYYY-MM-DD] [--from … --to …] [--tz <IANA名>] [--dry-run]  # 記録先に送る (--dry-run は一覧を表示するだけ)
 npm test                           # テストを実行
 ```
 
@@ -46,6 +59,12 @@ npm test                           # テストを実行
 | `CLAUDE_CONFIG_DIR` | Claude Code の設定ディレクトリ。既定は `~/.claude` |
 | `WORKLOG_CODEX_DIR` | Codex のログの読み取り先(その下の `sessions/` と `archived_sessions/`)。未設定なら `CODEX_HOME`、それも無ければ `~/.codex` |
 | `CODEX_HOME` | Codex CLI のホームディレクトリ。`WORKLOG_CODEX_DIR` が未設定のときに使います |
+| `WORKLOG_GEMINI_DIR` | Gemini CLI のログの読み取り先(その下の `tmp/`)。未設定なら `$GEMINI_CLI_HOME/.gemini`、それも無ければ `~/.gemini` |
+| `GEMINI_CLI_HOME` | Gemini CLI のホームディレクトリ。`WORKLOG_GEMINI_DIR` が未設定のときに使います |
+| `WORKLOG_COPILOT_DIR` | Copilot CLI のログの読み取り先(その下の `session-state/`)。未設定なら `COPILOT_HOME`、それも無ければ `~/.copilot` |
+| `COPILOT_HOME` | Copilot CLI のホームディレクトリ。`WORKLOG_COPILOT_DIR` が未設定のときに使います |
+| `WORKLOG_AIDER_DIRS` | Aider の履歴を探すフォルダ(パス区切りで複数可)。設定したときだけ Aider のログを読みます |
+| `WORKLOG_CURSOR_DIR` | Cursor のユーザーデータ(`…/Cursor/User`)。未設定なら OS ごとの既定の場所 |
 | `WORKLOG_CACHE_DIR` | キャッシュの保存先。既定は `~/.work-log` |
 | `WORKLOG_NO_MASK=1` | 画面表示時のマスキングを無効にします |
 | `GITHUB_TOKEN` | GitHub API のトークン。issue / PR の情報取得とコメント投稿に使います。最優先です |
@@ -78,6 +97,44 @@ npm test                           # テストを実行
 | `WORKLOG_TEAMS_WEBHOOK_ANY=1` | `TEAMS_WEBHOOK_URL` に Microsoft 以外の URL も許します。テスト用です |
 | `GOOGLE_CHAT_WEBHOOK_URL` | Google Chat のスペースの Webhook の URL(スペースの「アプリと統合」→「Webhook を管理」で作ります)。`chat.googleapis.com` の URL だけ使います |
 | `WORKLOG_GOOGLE_CHAT_WEBHOOK_ANY=1` | `GOOGLE_CHAT_WEBHOOK_URL` に Google 以外の URL も許します。テスト用です |
+| `CHATWORK_API_TOKEN` | Chatwork の API トークン(`X-ChatWorkToken` ヘッダーで送ります) |
+| `CHATWORK_ROOM_ID` | 送り先のルーム ID(`chatwork.roomId` でも指定できます) |
+| `MATTERMOST_WEBHOOK_URL` | Mattermost の Incoming Webhook の URL(`https://<host>/hooks/<ID>`)。`https://` のものだけ使います |
+| `WORKLOG_MATTERMOST_WEBHOOK_ANY=1` | `MATTERMOST_WEBHOOK_URL` に http の URL や上記の形以外の URL も許します。テスト用です |
+| `ROCKETCHAT_WEBHOOK_URL` | Rocket.Chat の Incoming Webhook の URL(`https://<host>/hooks/<ID>/<token>`)。`https://` のものだけ使います |
+| `WORKLOG_ROCKETCHAT_WEBHOOK_ANY=1` | `ROCKETCHAT_WEBHOOK_URL` に http の URL や上記の形以外の URL も許します。テスト用です |
+| `LINEWORKS_CLIENT_ID` | LINE WORKS の Client ID |
+| `LINEWORKS_CLIENT_SECRET` | LINE WORKS の Client Secret |
+| `LINEWORKS_SERVICE_ACCOUNT` | LINE WORKS のサービスアカウント |
+| `LINEWORKS_PRIVATE_KEY` | サービスアカウントの秘密鍵(PEM。改行は `\n` でもよい) |
+| `LINEWORKS_PRIVATE_KEY_FILE` | 秘密鍵のファイルのパス(`LINEWORKS_PRIVATE_KEY` の代わり) |
+| `LINEWORKS_BOT_ID` | 送信に使う Bot の ID |
+| `LINEWORKS_CHANNEL_ID` | 送り先のトークルームのチャンネル ID(`lineworks.channelId` でも指定できます) |
+| `WORKLOG_LINEWORKS_AUTH` | LINE WORKS のトークン取得先 URL。主にテスト用です |
+| `WORKLOG_LINEWORKS_API` | LINE WORKS の API の基点 URL。主にテスト用です |
+| `WORKLOG_WEBHOOK_URL` | 汎用 Webhook の URL。`https://` か、手元の受け口(`localhost` / `127.0.0.1` / `::1`)の `http://` だけ使います |
+| `WORKLOG_WEBHOOK_SECRET` | 設定すると、汎用 Webhook に HMAC-SHA256 の署名を付けます(「汎用 Webhook」を参照) |
+| `CONFLUENCE_BASE_URL` | Confluence Cloud の URL(`https://<site>.atlassian.net`)。`atlassian.net` のものだけ使います |
+| `CONFLUENCE_EMAIL` | Confluence のメールアドレス。`CONFLUENCE_API_TOKEN` と組で使います |
+| `CONFLUENCE_API_TOKEN` | Confluence の API トークン |
+| `CONFLUENCE_SPACE_ID` | ページを作るスペースの ID(数字。`confluence.spaceId` でも指定できます) |
+| `CONFLUENCE_PARENT_ID` | 親ページの ID(任意。数字。`confluence.parentId` でも指定できます) |
+| `WORKLOG_CONFLUENCE_BASE_ANY=1` | `CONFLUENCE_BASE_URL` に `atlassian.net` 以外も許します。テスト用です |
+| `ESA_ACCESS_TOKEN` | esa のアクセストークン(Bearer で送ります) |
+| `ESA_TEAM` | esa のチーム名(`esa.team` でも指定できます) |
+| `QIITA_ACCESS_TOKEN` | Qiita Team のアクセストークン(Bearer で送ります) |
+| `QIITA_TEAM_DOMAIN` | Qiita Team のドメイン(`<チーム名>.qiita.com`)。`qiita.com` 本体には送りません |
+| `OBSIDIAN_VAULT_DIR` | Obsidian の Vault のフォルダ(`obsidian.vault` でも指定できます) |
+| `GOOGLE_CLIENT_ID` | Google カレンダーへの記録に使う OAuth のクライアント ID |
+| `GOOGLE_CLIENT_SECRET` | 同じくクライアントシークレット |
+| `GOOGLE_REFRESH_TOKEN` | 同じくリフレッシュトークン(`calendar.events` か `calendar.app.created` のスコープ) |
+| `GOOGLE_CALENDAR_ID` | 記録先のカレンダーの ID(`gcal.calendarId` でも指定できます) |
+| `WORKLOG_GCAL_TOKEN_URL` | Google の OAuth のトークン取得先 URL。主にテスト用です |
+| `TOGGL_API_TOKEN` | Toggl Track の API トークン |
+| `CLOCKIFY_API_KEY` | Clockify の API キー(`X-Api-Key` ヘッダーで送ります) |
+| `WORKLOG_CLOCKIFY_API` | Clockify の API の URL。主にテスト用です(`clockify.baseUrl` でも変えられます) |
+| `HARVEST_ACCESS_TOKEN` | Harvest の Personal Access Token |
+| `HARVEST_ACCOUNT_ID` | Harvest のアカウント ID |
 | `PORT` | 待ち受けポート(`--port` が優先) |
 
 ## Codex 対応
@@ -105,11 +162,31 @@ OpenAI Codex CLI のセッションログを、Claude Code と同じ集計レコ
 
 ### 画面での扱い
 
-- ツールが 2 種類以上あると、ヘッダーに「すべてのツール / Claude Code / Codex」の絞り込みが出ます。カレンダー、検索、コストに効きます。
+- ツールが 2 種類以上あると、ヘッダーに「すべてのツール / Claude Code / Codex / …」の絞り込みが出ます(他のツールも含みます)。カレンダー、検索、コストに効きます。
 - Codex のブロックは、斜線のテクスチャとメタ行の「Codex」で見分けます。詳細パネルにはツールのバッジを表示します。
 - コストのグラフでは「OpenAI」系統として表示します。単価は利用者が設定します(「コスト」の「単価表の上書き」を参照)。
 - hooks 連携と、LLM 要約の hooks 部分は Claude Code のみです。Codex には hooks が無いため、状態はログの更新時刻で判定します。
 - Git 連携は Codex のセッションにも効きます。
+
+## 他のツールのログ(Gemini CLI / Copilot CLI / Aider / Cursor)
+
+Codex と同じように、次のツールのログも同じ集計レコードにして、カレンダー・コスト・日報に出します。ログの場所が無い環境では、何も起きません。取り込み元は `src/sources.js` の一覧にあり、1 つ足せば増やせます。
+
+| ツール | 読み取り先(既定) | 場所を変える環境変数 |
+| --- | --- | --- |
+| Gemini CLI | `~/.gemini/tmp/<プロジェクトID>/chats/session-*.jsonl`(古い版は `.json`)。`GEMINI_CLI_HOME` があればその下の `.gemini` | `WORKLOG_GEMINI_DIR` |
+| Copilot CLI | `~/.copilot/session-state/<ID>/events.jsonl`(と `workspace.yaml`)。古い版は `history-session-state/*.json`。`COPILOT_HOME` があればその下 | `WORKLOG_COPILOT_DIR` |
+| Aider | 各リポジトリの `.aider.chat.history.md`(あれば `.aider.input.history`) | `WORKLOG_AIDER_DIRS`(パス区切りで複数) |
+| Cursor | `…/Cursor/User/globalStorage/state.vscdb`(Linux は `~/.config`、macOS は `~/Library/Application Support`、Windows は `%APPDATA%` の下) | `WORKLOG_CURSOR_DIR` |
+
+- Gemini CLI: 1 行目のメタ情報と、以降のメッセージ(同じ ID のメッセージは後の行が正)を読みます。サブエージェント(`chats/<親セッションID>/`)も読みます。`logs.json` は入力した依頼だけの記録なので、`chats` が無いセッションに限って補助的に使います。
+- Copilot CLI: `session.start` / `user.message` / `assistant.message` / `session.shutdown` などのイベントを読みます。応答ごとの利用量(`assistant.usage`)はファイルに残らないので、終了時のモデルごとの利用量を使います。
+- Aider: 中央の保存場所が無いので、`WORKLOG_AIDER_DIRS` に挙げたフォルダの下を 3 階層まで探します。設定しないと読みません。依頼ごとの時刻は `.aider.input.history` からしか取れないため、あれば使います。
+- Cursor: Cursor の保存形式は公開されていません。ここで読んでいる形は、読み取りツール(`cursor-history`、`cursor-chat-history-mcp`)の実装から調べた非公式のもので、Cursor の更新で変わることがあります。SQLite は Node.js 標準の `node:sqlite`(Node.js 22.5 以降)で読み取り専用に開くので、それ未満では何も読みません。DB は常に書き換わるため、ファイル監視はせず、定期スキャンで読みます。
+- コスト: Gemini のモデルの単価は組み込んでいません。`~/.work-log/pricing.json` に書かない限り、単価不明として合計から除外します(「コスト」の「単価表の上書き」を参照)。
+- 画面の絞り込みや日報の「(ツール名)」の印は、Codex と同じように働きます。hooks 連携は Claude Code のみです。
+
+形式は、各ツールの公開ソース・スキーマに合わせて実装しています。実際のツールでの確認の範囲は、「送り先連携」の「動作確認」にまとめています。
 
 ## 画面
 
@@ -439,15 +516,15 @@ Notion には `POST /v1/comments` で、ページへのコメントとして投�
 - Linear / Jira / Backlog: この開発環境から接続できないため、実際のサービスでは確認していません。公式の SDK / ドキュメント(`@linear/sdk` の型定義、gitlabhq の `doc/api`、nulab/backlog-js、jira.js)に合わせた偽サーバーとテストでだけ確認しています。実際に使うときは、まず取得の表示から確かめてください。
 - Notion: Notion の API にもこの開発環境から接続できないため、実際のサービスでは確認していません。公式 SDK(`@notionhq/client`、`Notion-Version` 2025-09-03)の型定義に合わせた偽サーバーとテスト(`test/notion.test.js`)でだけ確認しています。取得もコメントの投稿も、実際に使うときはまず取得の表示から確かめてください。
 
-## Slack / Discord / Teams / Google Chat 連携
+## 送り先連携
 
-日報・週報を Slack、Discord、Microsoft Teams、Google Chat に送ります。画面からも CLI からも送れます。セッション終了の通知(任意)もあります。送り先は 1 つでも複数でも設定でき、設定が無ければ何も送りません。
+日報・週報を、チャット(Slack、Discord、Microsoft Teams、Google Chat、Chatwork、Mattermost、Rocket.Chat、LINE WORKS)、汎用 Webhook、ドキュメント(Confluence、esa、Qiita Team、Obsidian)に送ります。画面からも CLI からも送れます。送り先は `src/destinations.js` の一覧にあり、1 項目足せば増やせます。セッション終了の通知(任意)もあります。送り先は 1 つでも複数でも設定でき、設定が無ければ何も送りません。
 
 ### 共通の動作
 
 - 日報・週報の内容、期間、タイムゾーンの扱いは、どちらの送り先でも同じです(「日報・週報の内容」)。
 - 画面からは、確認ダイアログで送る内容を見てから送ります。プレビューの後に内容が変わったときは、送らずに、もう一度確認するよう求めます。
-- CLI の `report` は、`--slack` / `--discord` / `--teams` / `--google-chat` を付けると確認なしで送ります。
+- CLI の `report` は、送り先のオプション(`--slack` / `--discord` / `--teams` / `--google-chat` / `--chatwork` / `--mattermost` / `--rocketchat` / `--lineworks` / `--webhook` / `--confluence` / `--esa` / `--qiita-team` / `--obsidian`)を付けると確認なしで送ります。
 - セッション終了の通知は、送り先ごとに `notify` を設定します。送ったものは二度送りません。
 - 本文は、書式を整える前に秘匿情報をマスキングします(「秘匿情報」)。
 - Webhook の URL とトークンはサーバー側だけで使い、ブラウザには渡しません。
@@ -462,6 +539,21 @@ Notion には `POST /v1/comments` で、ページへのコメントとして投�
 | 投稿へのリンク | Bot のときだけ | メッセージへのリンクが取れたとき | なし | なし |
 | `config.json` | `slack` | `discord` | `teams` | `googlechat` |
 
+あとから加えた送り先は次のとおりです。
+
+| | 送り方 | 環境変数 | `config.json` | 投稿へのリンク | セッション終了の通知 |
+| --- | --- | --- | --- | --- | --- |
+| Chatwork | API(ルームへ投稿) | `CHATWORK_API_TOKEN`、`CHATWORK_ROOM_ID` | `chatwork` | あり | あり |
+| Mattermost | Incoming Webhook | `MATTERMOST_WEBHOOK_URL` | `mattermost` | なし | あり |
+| Rocket.Chat | Incoming Webhook | `ROCKETCHAT_WEBHOOK_URL` | `rocketchat` | なし | あり |
+| LINE WORKS | Bot API 2.0 | `LINEWORKS_*`(後述) | `lineworks` | なし | あり |
+| 汎用 Webhook | JSON を POST | `WORKLOG_WEBHOOK_URL`、`WORKLOG_WEBHOOK_SECRET` | `webhook` | なし | あり |
+| Confluence | ページを作る・更新する | `CONFLUENCE_*` | `confluence` | あり | なし |
+| esa | 記事を作る・更新する | `ESA_ACCESS_TOKEN`、`ESA_TEAM` | `esa` | あり | なし |
+| Qiita Team | 記事を作る・更新する | `QIITA_ACCESS_TOKEN`、`QIITA_TEAM_DOMAIN` | `qiitateam` | あり | なし |
+| Obsidian | Vault にノートを書く | `OBSIDIAN_VAULT_DIR` | `obsidian` | あり(`obsidian://` の URI) | あり |
+
+どの送り先にも、`config.json` の `includeCost`(API 換算コストを載せるか)と `maxSessions`(セッション一覧の件数。ページ形式は既定 500、ほかは 20)を使えます。通知のある送り先は `notify` も使えます。
 ### Slack
 
 #### 送り方
@@ -618,6 +710,193 @@ Notion には `POST /v1/comments` で、ページへのコメントとして投�
 - Chat には記号を逃がす書き方がないので、タイトルなどの中の `*` `_` `~` `` ` `` `<` `>` `|` は全角に置き換えます。`<users/all>` のようなメンションとして解釈されるのも、これで防ぎます。
 - メッセージ全体は 32,000 バイトまでです(Chat API の Message の説明)。収まるよう、セッション一覧を後ろから減らし、減らした分は「ほか n セッション」とまとめます。
 
+### Chatwork
+
+`CHATWORK_API_TOKEN` と、送り先のルーム ID(`config.json` の `chatwork.roomId`、無ければ `CHATWORK_ROOM_ID`)を設定します。
+
+- `POST https://api.chatwork.com/v2/rooms/{room_id}/messages` に、`body` を `application/x-www-form-urlencoded` で送ります。トークンは `X-ChatWorkToken` ヘッダーです。
+- 応答の `message_id` から、投稿へのリンク(`https://www.chatwork.com/#!rid{room}-{message_id}`)を作って、画面に「開く」を出します。
+- 本文は 1 通 65535 文字までですが、Work Log は 30000 文字に収めます。収まらないセッションは「ほか n セッション」とまとめます。
+- Chatwork の記法(`[To:…]`、`[info]` など)は `[` で始まるので、タイトルなどの中の `[` `]` は全角にして、記法として働かないようにします。
+- トークンはサーバー側だけで使い、ブラウザには渡しません。
+
+`config.json` の `chatwork` に書きます(任意)。
+
+```json
+{
+  "chatwork": { "roomId": "<ルーム ID>", "includeCost": false, "maxSessions": 20, "notify": "session_end" }
+}
+```
+
+### Mattermost
+
+`MATTERMOST_WEBHOOK_URL` に、チャンネルの Incoming Webhook の URL(`https://<host>/hooks/<ID>`)を設定します。自分のサーバーで動かすものなので、`https://` であればホストは問いません(サブパスで動かしているサーバーも使えます)。
+
+- `{ "text", "username", "icon_url" }` を JSON で POST します。投稿へのリンクは返らないので、「開く」は出ません。
+- 本文は 16383 文字に収めます(古いサーバーの上限に合わせています)。収まらないセッションは「ほか n セッション」とまとめます。
+- Markdown の記号は `\` で逃がし、`@channel` / `@all` / `@here` / `@ユーザー名` は全角の `＠` にして、メンションにしません。
+- Webhook の URL は認証情報なので、サーバー側だけで使います。
+
+`config.json` の `mattermost` に書きます(任意)。`username` と `iconUrl` は、投稿の表示名とアイコンです。
+
+```json
+{
+  "mattermost": { "username": "Work Log", "iconUrl": "https://example.com/icon.png", "includeCost": false, "maxSessions": 20, "notify": "session_end" }
+}
+```
+
+### Rocket.Chat
+
+`ROCKETCHAT_WEBHOOK_URL` に、管理画面の「インテグレーション」で作った Incoming Webhook の URL(`https://<host>/hooks/<ID>/<token>`)を設定します。`https://` であればホストは問いません。
+
+- `{ "text" }` を JSON で POST します。投稿へのリンクは返らないので、「開く」は出ません。失敗は `success: false` と `error` の JSON で返るので、その `error` を表示します。
+- 本文は、既定の上限(`Message_MaxAllowedSize` の初期値 5000)に収めます。
+- Markdown の記号の確かな逃がし方が見つからなかったので、タイトルなどの中の記号は全角に置き換えます。
+- URL(`token` を含む)は認証情報なので、サーバー側だけで使います。
+
+`config.json` の `rocketchat` に書きます(任意)。
+
+```json
+{
+  "rocketchat": { "includeCost": false, "maxSessions": 20, "notify": "session_end" }
+}
+```
+
+### LINE WORKS
+
+Bot API 2.0 で、トークルームに送ります。サービスアカウントの JWT(RS256)を秘密鍵で署名し、`https://auth.worksmobile.com/oauth2/v2.0/token` でアクセストークン(scope `bot`)に換え、期限まで使い回します。送信は `POST https://www.worksapis.com/v1.0/bots/{botId}/channels/{channelId}/messages` です。
+
+環境変数:
+
+- `LINEWORKS_CLIENT_ID` / `LINEWORKS_CLIENT_SECRET` / `LINEWORKS_SERVICE_ACCOUNT`
+- `LINEWORKS_PRIVATE_KEY`(PEM。改行は `\n` でもよい)か `LINEWORKS_PRIVATE_KEY_FILE`(ファイルのパス)
+- `LINEWORKS_BOT_ID`
+- `LINEWORKS_CHANNEL_ID`(`config.json` の `lineworks.channelId` でもよい)
+- `WORKLOG_LINEWORKS_AUTH`(トークンの URL)、`WORKLOG_LINEWORKS_API`(API の基点): 主にテスト用です。
+
+- テキストは 1 通 2000 文字までなので、1900 文字ごとに分け、最大 5 通で送ります。5 通に収まらないセッションは「ほか n セッション」とまとめます。
+- 秘密鍵・Client Secret・トークンはサーバー側だけで使い、ブラウザには渡しません。
+
+```json
+{
+  "lineworks": { "channelId": "<チャンネル ID>", "includeCost": false, "maxSessions": 20, "notify": "session_end" }
+}
+```
+
+### 汎用 Webhook
+
+Zapier、n8n、Make などに、日報・週報とセッション終了の通知を JSON で POST します。そこから先の転送先は、Work Log では分かりません。
+
+- `WORKLOG_WEBHOOK_URL`: `https://` の URL か、手元の受け口(`localhost` / `127.0.0.1` / `::1`)の `http://` だけ使います。リダイレクトは追わず、1 回のリクエストは 10 秒でタイムアウトします。429 のときは再試行までの秒数を表示します。投稿へのリンクは返りません。
+- `WORKLOG_WEBHOOK_SECRET`(任意): 設定すると、次の 2 つのヘッダーを付けます。
+  - `X-WorkLog-Timestamp`: 送った時刻(UNIX 秒)
+  - `X-WorkLog-Signature`: `sha256=<hex>`。`"<時刻>.<本文>"` の HMAC-SHA256 で、本文は送るバイト列そのままです。
+- URL と鍵はサーバー側だけで使い、ブラウザには渡しません(画面に渡すのは URL のホストだけです)。
+- `config.json` の `webhook` は `includeCost`、`maxSessions`、`notify`。
+
+日報・週報(`type: "report"`)の JSON:
+
+```json
+{
+  "type": "report",
+  "version": 1,
+  "period": "day",
+  "range": { "start": "2026-10-03T15:00:00.000Z", "end": "2026-10-04T15:00:00.000Z", "startDate": "2026-10-04", "timeZone": "Asia/Tokyo" },
+  "totals": { "activeMs": 5400000, "sessions": 3, "commits": 2, "usd": 1.23 },
+  "projects": [{ "project": "work-log", "activeMs": 5400000, "sessions": 3, "commits": 2 }],
+  "tasks": [{ "id": "ABC-123", "label": "ABC-123", "url": "https://…", "activeMs": 3600000, "issue": { "title": "…", "state": "進行中" } }],
+  "sessions": [{ "id": "…", "title": "…", "project": "work-log", "tool": "claude", "start": "2026-10-04T01:00:00.000Z", "activeMs": 1800000, "commits": 1, "status": "done" }],
+  "text": "人が読むための要約(プレーンテキスト)"
+}
+```
+
+- `totals.usd` は `includeCost` が `true` のときだけ入ります。`tasks[].url` は無ければ `null`、`issue` は課題の情報が取れたときだけ入ります。
+- `maxSessions` を超えたセッションは `sessions` から外れます(`text` では「ほか n セッション」)。
+
+セッション終了の通知(`type: "session_end"`)の JSON:
+
+```json
+{
+  "type": "session_end",
+  "version": 1,
+  "session": {
+    "id": "…", "title": "…", "project": "work-log", "tool": "claude",
+    "start": "2026-10-04T01:00:00.000Z", "end": "2026-10-04T01:30:00.000Z", "activeMs": 1800000, "commits": 1,
+    "tasks": [{ "id": "ABC-123", "label": "ABC-123", "url": "https://…" }],
+    "usd": 0.42
+  }
+}
+```
+
+受け取る側での検証の例(Node.js。本文は JSON に直す前の生のバイト列で計算します):
+
+```js
+import { createHmac, timingSafeEqual } from 'node:crypto';
+
+function verify(rawBody, headers, secret, toleranceSec = 300) {
+  const ts = headers['x-worklog-timestamp'];
+  const sig = headers['x-worklog-signature'] || '';
+  if (!ts || Math.abs(Date.now() / 1000 - Number(ts)) > toleranceSec) return false; // 古すぎる通知は捨てる
+  const expected = `sha256=${createHmac('sha256', secret).update(`${ts}.${rawBody}`).digest('hex')}`;
+  const a = Buffer.from(sig);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+```
+
+時刻も署名に含むので、同じ通知を後から使い回されても通りません。
+
+### ドキュメントへの保存(Confluence / esa / Qiita Team / Obsidian)
+
+チャットと違い、日報・週報を 1 つのページ(記事・ノート)にします。セッションは表にして、既定では 500 件まで載せます。
+
+- 同じ日・週を送り直すと、新しいページを作らず、同じページを更新します。ページとの対応は、キャッシュのフォルダのファイルに覚えます(後述の「キャッシュ」)。相手側でページが消されていたときは、作り直します。
+- 題名は `Work Log <期間>` です。
+- 週の途中で送り直せば、その時点の内容に上書きされます。手で編集した内容も上書きされるので、注意してください。
+- API は、リダイレクトを追わず、1 回のリクエストは 10 秒でタイムアウトします。
+
+#### Confluence
+
+Confluence Cloud の REST v2 で、ページとして保存します。
+
+- 環境変数: `CONFLUENCE_BASE_URL`(`https://<site>.atlassian.net`。`/wiki` を付けてもよい)、`CONFLUENCE_EMAIL`、`CONFLUENCE_API_TOKEN`(メールアドレスと API トークンの Basic 認証)、`CONFLUENCE_SPACE_ID`(数字のスペース ID)、`CONFLUENCE_PARENT_ID`(任意。親ページの ID)。`WORKLOG_CONFLUENCE_BASE_ANY=1` は `atlassian.net` 以外を許すテスト用です。
+- 新規は `POST /wiki/api/v2/pages`(本文は storage format)、更新は `PUT /wiki/api/v2/pages/{id}` です。更新では、保存してあるバージョンではなく、`GET` で今のバージョン番号を取って +1 します(画面で編集されていても競合しにくくするためです)。
+- 「開く」リンクは、応答の `_links.webui` から作ります。
+- `config.json` の `confluence`: `spaceId`、`parentId`(環境変数が優先)、`includeCost`、`maxSessions`。
+- API トークンはサーバー側だけで使います。
+
+#### esa
+
+esa(esa.io)に記事として保存します。
+
+- 環境変数: `ESA_ACCESS_TOKEN`、`ESA_TEAM`(`config.json` の `esa.team` でもよい)。
+- 新規は `POST /v1/teams/{team}/posts`、更新は `PATCH /v1/teams/{team}/posts/{number}` です(本文は `{ "post": { name, category, body_md, wip, message } }`)。
+- カテゴリは `config.json` の `esa.category`(既定は日報が `Work Log/日報`、週報が `Work Log/週報`)。`%{year}` `%{month}` `%{day}` `%{kind}` は、期間の開始日と「日報」「週報」に置き換えます。記事名に `/` を含めないよう、題名はハイフン区切りにします。
+- 記事は公開(`wip` なし)で作ります。下書きにしたいときは `esa.wip` を `true` にします。更新のときは、esa の画面で Ship it した記事を下書きに戻さないよう、`wip` を送りません(`esa.wip` が `true` のときだけ送ります)。
+- `config.json` の `esa`: `team`、`category`、`wip`、`includeCost`、`maxSessions`。
+
+#### Qiita Team
+
+Qiita Team の記事として保存します。誰にでも公開される `qiita.com` 本体には送りません。
+
+- 環境変数: `QIITA_ACCESS_TOKEN`、`QIITA_TEAM_DOMAIN`(`<チーム名>.qiita.com`。`https://` や末尾の `/` は付けてもよい)。
+- 新規は `POST /api/v2/items`、更新は `PATCH /api/v2/items/{id}` です。
+- タグは「日報」「週報」です。`config.json` の `qiitateam.tags` に文字列の配列を書くと置き換えます(5 個まで)。
+- 本文中の `@ユーザー名` は逃がしていないので、通知になる場合があります。
+- `config.json` の `qiitateam`: `tags`、`includeCost`、`maxSessions`。
+
+#### Obsidian
+
+Vault のフォルダに、Markdown のノートを直接書きます。ネットワークは使いません。
+
+- Vault は `OBSIDIAN_VAULT_DIR`(または `config.json` の `obsidian.vault`)、書き込み先のフォルダは `obsidian.folder`(既定 `Work Log`)です。
+- 日報は `<フォルダ>/2026-10-04 日報.md`、週報は `<フォルダ>/2026-W40 週報.md` です。同じ期間を送り直すと、そのノートを上書きします(一時ファイルに書いてから置き換えます)。
+- セッション終了の通知(`obsidian.notify` が `"session_end"` のとき)は、`<フォルダ>/2026-10-04 セッション.md` の末尾に 1 行足します。
+- 安全のため、フォルダに `..` や絶対パス、`.` で始まる名前(`.obsidian` など)は使えません。書き込み先は、シンボリックリンクをたどった後も Vault の中でなければ、書きません。ファイル名は期間の日付だけから作ります。
+- 「開く」リンクは `obsidian://open?vault=<Vault のフォルダ名>&file=<ノートのパス>` です。
+- Vault を同期・共有しているときは、その相手にも届きます。
+- `config.json` の `obsidian`: `vault`、`folder`、`includeCost`、`maxSessions`、`notify`。
+
 ### 日報・週報の内容
 
 - 見出し: 日報は日付、週報は月曜から日曜までの期間です。
@@ -647,12 +926,12 @@ Notion には `POST /v1/comments` で、ページへのコメントとして投�
 ### CLI から送る
 
 ```sh
-node src/cli.js report [--week] [--date YYYY-MM-DD] [--tz <IANA名>] [--slack] [--discord] [--teams] [--google-chat]
+node src/cli.js report [--week] [--date YYYY-MM-DD] [--tz <IANA名>] [--slack] [--discord] [--teams] [--google-chat] [--chatwork] [--mattermost] [--rocketchat] [--lineworks] [--webhook] [--confluence] [--esa] [--qiita-team] [--obsidian]
 ```
 
 - 既定は今日の日報です。`--week` で、`--date`(省略すると今日)を含む週の週報にします。
 - 内容はターミナルに表示します。
-- `--slack` / `--discord` / `--teams` / `--google-chat` を付けると、確認なしで送ります。複数付けると、Slack、Discord、Teams、Google Chat の順に送ります。cron などで定期的に送れます。
+- 送り先のオプションを付けると、確認なしで送ります。複数付けると、`src/destinations.js` の一覧の順(Slack、Discord、Teams、Google Chat、Chatwork、Mattermost、Rocket.Chat、LINE WORKS、Webhook、Confluence、esa、Qiita Team、Obsidian)に送ります。cron などで定期的に送れます。
 - 失敗したときは、メッセージを表示して exit 1 で終わります。先の送り先で失敗したときは、後の送り先には送りません。
 
 例: 平日の 18 時に日報を送る(パスは環境に合わせてください)。
@@ -662,20 +941,21 @@ node src/cli.js report [--week] [--date YYYY-MM-DD] [--tz <IANA名>] [--slack] [
 0 18 * * 1-5  cd <リポジトリのパス> && DISCORD_WEBHOOK_URL=<Webhook の URL> node src/cli.js report --discord
 0 18 * * 1-5  cd <リポジトリのパス> && TEAMS_WEBHOOK_URL=<Webhook の URL> node src/cli.js report --teams
 0 18 * * 1-5  cd <リポジトリのパス> && GOOGLE_CHAT_WEBHOOK_URL=<Webhook の URL> node src/cli.js report --google-chat
+0 18 * * 1-5  cd <リポジトリのパス> && OBSIDIAN_VAULT_DIR=<Vault のパス> node src/cli.js report --obsidian
 ```
 
 ### API
 
-- `GET /api/report`: プレビューです。`target`(`slack` / `discord` / `teams` / `googlechat`)、`period`(`day` / `week`)、`date`(`YYYY-MM-DD`)、`tz` を指定します。送る内容(`preview`)、プレーンテキストにしたもの(`previewText`)、内容の `hash`、合計、送り先の状態を返します。
+- `GET /api/report`: プレビューです。`target`(`slack` / `discord` / `teams` / `googlechat` / `chatwork` / `mattermost` / `rocketchat` / `lineworks` / `webhook` / `confluence` / `esa` / `qiitateam` / `obsidian`)、`period`(`day` / `week`)、`date`(`YYYY-MM-DD`)、`tz` を指定します。送る内容(`preview`)、プレーンテキストにしたもの(`previewText`)、内容の `hash`、合計、送り先の状態を返します。
 - `POST /api/report`: `{ "target", "period", "date", "tz", "hash" }` を送ると、送信します。`hash` がプレビューのものと違うときは、送らずに 409 を返します。
 - `target` を省略すると `slack` です。
 - `/api/slack/report` は、`target=slack` と同じです(互換のために残しています)。
 
 ### セッション終了の通知
 
-`slack.notify`、`discord.notify`、`teams.notify`、`googlechat.notify` が `"session_end"` で、その送り先が使える状態のとき、サーバーの起動中に hooks の `SessionEnd` を受けたセッションを、1 件ずつ送ります。複数設定すれば、すべてに送ります。hooks 連携(`hooks install`)が必要です。
+`slack.notify`、`discord.notify`、`teams.notify`、`googlechat.notify`、`chatwork.notify`、`mattermost.notify`、`rocketchat.notify`、`lineworks.notify`、`webhook.notify`、`obsidian.notify` が `"session_end"` で、その送り先が使える状態のとき、サーバーの起動中に hooks の `SessionEnd` を受けたセッションを、1 件ずつ送ります。複数設定すれば、すべてに送ります。hooks 連携(`hooks install`)が必要です。
 
-- 内容: タイトル、プロジェクト、作業時間、コミット数、Codex の印、紐付いたタスクです。API 換算コストは `includeCost` を設定したときだけ載せます。Discord では、タイトルを embed の見出しにします。Teams では、タイトルを Adaptive Card の見出しにします。Google Chat では、タイトルを太字の 1 行目にします。
+- 内容: タイトル、プロジェクト、作業時間、コミット数、Codex の印、紐付いたタスクです。API 換算コストは `includeCost` を設定したときだけ載せます。Discord では、タイトルを embed の見出しにします。Teams では、タイトルを Adaptive Card の見出しにします。Google Chat では、タイトルを太字の 1 行目にします。汎用 Webhook には `type: "session_end"` の JSON を送り、Obsidian には、その日の「セッション.md」の末尾に 1 行足します。Confluence・esa・Qiita Team は、ページを作る送り先なので、通知は送りません。
 - 終了から 2 時間以内のものだけ送ります。サーバーの停止中に終わったセッションを、起動後にまとめて送ることはありません。
 - 同じ終了は、送り先ごとに二度送りません。送った記録は `slack-notified.json` に残します(Slack だけだった頃の記録も、そのまま使います)。送信に失敗したときも、その送り先には同じものを繰り返し送りません(警告をログに出します)。ほかの送り先には影響しません。
 - 本文は秘匿情報をマスキングします。
@@ -694,6 +974,121 @@ Slack、Discord、Teams、Google Chat の API には、この開発環境から�
 - Google Chat: 偽サーバーとテスト(`test/googlechat.test.js`)でだけ確認しています。送るデータの形と制限は、Chat API の discovery document(`chat.googleapis.com` の `$discovery`、v1)と `@googleapis/chat` に合わせています。実際のスペースには接続できていません。
 
 実際に使うときは、まず `report` コマンドで本文を確かめ、次にテスト用のチャンネルへ送ってみてください。
+
+#### あとから加えた送り先・記録先・ログの取り込み元
+
+次のものも、この開発環境からは実際のアカウント・サービス・ツールに接続できないため、すべて偽サーバーとテストフィクスチャ(`test/fixtures/`)でだけ確認しています。実際のサービスでの動作は未確認です。確認の根拠は、各モジュールの先頭のコメントにも書いています。
+
+送り先:
+
+- Chatwork(`test/chatwork.test.js`): 公式の API 定義(chatwork/api の RAML。`body` は必須で 1〜65535 文字、応答は `message_id`)と、公式の MCP サーバー(`@chatwork/mcp-server`)の実装(`X-ChatWorkToken` ヘッダー、form-urlencoded)に合わせています。未確認: API への実際の送信、制限(429)の応答ヘッダーの正確な名前(`retry-after` か `x-ratelimit-reset` のどちらかを見ています)。
+- Mattermost(`test/mattermost.test.js`): mattermost/mattermost のソース(`webhook.go` のルートと JSON の本文、`incoming_webhook.go` の `text` / `username`(64 文字まで)/ `icon_url`(1024 文字まで)、`app/webhook.go` の自動分割)に合わせています。16383 文字は古いサーバーの上限です。未確認: 実際のサーバーへの送信。
+- Rocket.Chat(`test/rocketchat.test.js`): Rocket.Chat 7.0.0 のソース(`api.js` のルートと失敗時の JSON、`processWebhookMessage.ts`、`Message_MaxAllowedSize` の初期値 5000)に合わせています。未確認: 実際のサーバーへの送信、Markdown の記号の逃がし方(確かな方法が見つからないので全角にしています)。
+- LINE WORKS(`test/lineworks.test.js`): 公式のドキュメントには届かなかったため、LINE WORKS の API を使う公開パッケージ(`nworks`、`chat-adapter-lineworks`、`lineworks-mcp-server`)の実装(URL、JWT の項目、scope、`Authorization: Bearer`、本文の形、テキスト 2000 文字の制限)に合わせています。JWT の署名は、自前の鍵とテストで検証しています。未確認: 実際の LINE WORKS への送信、公式ドキュメントとの突き合わせ。
+- 汎用 Webhook(`test/webhook.test.js`): 偽の fetch に対して、JSON の形と署名(`"<時刻>.<本文>"` の HMAC-SHA256)をテストで確認しています。受け取る側のサービス(Zapier など)では確認していません。
+- Confluence(`test/confluence.test.js`): `confluence.js` 3.2.0(atlassian の OpenAPI から生成された SDK)の v2 の定義(`POST /wiki/api/v2/pages`、`PUT …/pages/{id}`、`GET …/pages/{id}`、応答の `id` / `status` / `version.number` / `_links.webui`)に合わせています。未確認: エラー応答の細かい形、同じスペースに同名のページがあるときのエラーの内容、429 の `Retry-After` の有無、`webui` を基準の URL(`…/wiki`)に足した URL の正しさ。
+- esa(`test/esa.test.js`): `esa-node` 0.2.2 と esa gem 3.7.0 の中身(`https://api.esa.io/v1`、Bearer、作成・更新のパスと `{ post: … }` の包み方、記事の項目、429 の `Retry-After`)に合わせています。未確認: エラー応答の本文の形、同じカテゴリに同名の記事があるときのエラー、記事名に `/` を含めたときの扱い(題名はハイフン区切りにして避けています)。
+- Qiita Team(`test/qiitateam.test.js`): qiita gem 1.6.0 と `qiita-js` 0.4.3 の中身(ホスト `<team>.qiita.com`、Bearer、`create_item` = `POST /api/v2/items`、`update_item` = `PATCH /api/v2/items/{id}`)に合わせています。未確認: 記事の項目(`title` / `body` / `tags` / `private`)の細かい仕様と必須かどうか、応答の `id` / `url`、エラー応答の本文の形、レート制限の応答、本文中の `@ユーザー名` が通知になるか。
+- Obsidian(`test/obsidian.test.js`): 一時フォルダの Vault に実際に書いて確認しています(上書き、末尾への追記、フォルダの指定が Vault の外になるもの・外を指すシンボリックリンクの拒否)。未確認: `obsidian://open` の URI で Obsidian が実際に開くか。
+- ページを作る送り先の共通部品(`src/docutil.js`、`src/docreport.js`)は、`test/docreport.test.js` と各送り先のテストで確認しています(同じ期間を送り直すと更新、相手側で消えていれば作り直し)。
+
+記録先とカレンダー:
+
+- `.ics`(`test/ical.test.js`): RFC 5545 の規則(CRLF、75 オクテットの折り返し、TEXT のエスケープ、UID、UTC の日時)を、出力の文字列に対するテストで確認しています。カレンダーアプリへの取り込みは試していません。
+- Google カレンダー(`test/sync.test.js`): Calendar API v3 の discovery 文書(`https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest`、revision 20260925)の `events.insert` / `events.update` / `events.delete`、`Event` の形、OAuth のトークンの場所(`https://oauth2.googleapis.com/token`)に合わせています。未確認(実際の Google アカウントでは試していません): `refresh_token` での更新の応答、削除済みの予定に対する 410 の扱い、エラー応答の文言。
+- Toggl Track(`test/sync.test.js`): 公式の文書はこの環境から読めなかったため、SDK の `toggl-track` 0.9.1 と `toggl-client` 3.7.2 の実装(`https://api.track.toggl.com/api/v9`、Basic 認証 `<token>:api_token`、`time_entries` の POST / PUT / DELETE、本文の項目、`GET me` の `default_workspace_id`)に合わせています。未確認: `tags` に無い名前を渡したときにタグが作られるか、エラー応答の形、利用制限の値(1 秒に 1 回程度を目安に間隔を空けています)。
+- Clockify(`test/sync.test.js`): 公式の文書と API はこの環境から読めなかったため、`clockify-sdk` 0.1.1 と `clockify-ts` 1.2108.13 の実装と型(`https://api.clockify.me/api/v1`、`X-Api-Key`、`time-entries` の POST / PUT / DELETE、`GET /user` の `activeWorkspace`)に合わせています。未確認: `PUT` で省いた項目が消えるか(省かずに全部送っています)、エラー応答の形、地域ごとの API の場所。
+- Harvest(`test/sync.test.js`): 公式の文書と API はこの環境から読めなかったため、`harvest-v2` 3.0.0 と `node-harvest-api` 1.0.6 の実装(`https://api.harvestapp.com/v2/time_entries`、`Authorization: Bearer` / `Harvest-Account-ID` / `User-Agent` のヘッダー、更新は `PATCH`)と、公式の古い文書(`harvesthq/api` の README)で `User-Agent` を求めていることに合わせています。未確認: 本文の `project_id` / `task_id` / `spent_date` / `hours` / `notes` の扱い(SDK は本文をそのまま渡すだけで、項目名は SDK からは確かめられていません)、開始・終了の時刻で記録する設定のアカウントで `hours` が受け付けられるか、エラー応答の形。
+
+ログの取り込み元(`test/fixtures/` のサンプルログで確認):
+
+- Gemini CLI(`test/gemini.test.js`): `google-gemini/gemini-cli` の `packages/core`(`chatRecordingService`、`chatRecordingTypes`、`storage`、`projectRegistry`。`@google/gemini-cli-core` 0.62)に合わせています。実際の Gemini CLI は動かしていません。
+- Copilot CLI(`test/copilot.test.js`): `@github/copilot` の同梱スキーマ(`schemas/session-events.schema.json`)と `app.js`(1.0.63)に合わせています。実際の Copilot CLI は動かしていません。
+- Aider(`test/aider.test.js`): `Aider-AI/aider` の `io.py`・`coders/base_coder.py`・`repo.py` と、prompt_toolkit の `FileHistory` に合わせています。実際の Aider は動かしていません。
+- Cursor(`test/cursor.test.js`): 保存形式は非公式です。オープンソースの読み取りツール(`cursor-history` 0.18、`cursor-chat-history-mcp` 0.2)の実装に合わせ、テストの中で同じ表の SQLite を作って確認しています(`node:sqlite` が使えない Node.js ではスキップします)。実際の Cursor では確認しておらず、Cursor の更新で読めなくなることがあります。
+
+実際に使うときは、まず `--dry-run`(記録先)や `report` コマンド(送り先)、画面のプレビューで内容を確かめ、テスト用のチャンネル・カレンダー・ワークスペースで試してから、本番で使ってください。
+
+## カレンダーと工数管理
+
+作業のセッションを、カレンダーアプリに取り込める `.ics` に書き出したり、Google カレンダー・Toggl Track・Clockify・Harvest に記録したりできます。どちらも任意です。記録先は `src/sync/index.js` の一覧にあり、1 項目足せば増やせます。
+
+### 予定の作り方
+
+- 1 つの予定は、セッションの 1 つの区間(30 分以上空くと別の区間)です。`mergeSegments` を `true` にすると、セッションごとに 1 件にまとめます。
+- 予定のキーは `<セッションID>-<区間の番号>`(まとめるときは `<セッションID>`)です。区間は後ろにしか増えないので、番号は変わりません。
+- タイトルはセッションのタイトルです。説明には、プロジェクト、ツール、ブランチ、コミット(10 件まで)、タスクを入れます。秘匿情報はマスキングします。
+
+### .ics の書き出し
+
+外部には何も送りません。
+
+```sh
+node src/cli.js ical [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--tz <IANA名>] [--out file]
+```
+
+- 期間を省くと過去 30 日です(最大 366 日)。`--out` を省くと標準出力に出します。
+- 画面では、何も選んでいないときの右側に「カレンダー(.ics)を書き出す」リンクが出ます(表示している週が対象)。API は `GET /api/calendar.ics?from=&to=&tz=` です。
+- RFC 5545 に合わせています。行末は CRLF、1 行 75 オクテットで折り返し(UTF-8 の文字の途中では切りません)、`\` `;` `,` と改行はエスケープします。UID は `<セッションID>-<区間の番号>@work-log` で固定なので、取り込み直しても重複しません。日時は UTC(`Z` 付き)で、長さ 0 の区間は終わりを 1 分後にします。
+
+### 記録先への記録
+
+| 記録先 | CLI のオプション | 環境変数 | `config.json` |
+| --- | --- | --- | --- |
+| Google カレンダー | `--gcal` | `GOOGLE_CLIENT_ID`、`GOOGLE_CLIENT_SECRET`、`GOOGLE_REFRESH_TOKEN`、`GOOGLE_CALENDAR_ID` | `gcal` |
+| Toggl Track | `--toggl` | `TOGGL_API_TOKEN` | `toggl` |
+| Clockify | `--clockify` | `CLOCKIFY_API_KEY` | `clockify` |
+| Harvest | `--harvest` | `HARVEST_ACCESS_TOKEN`、`HARVEST_ACCOUNT_ID` | `harvest` |
+
+- 対象は、終わったセッションだけです。
+- 画面では、何も選んでいないときの右側に、設定した記録先ごとに「この週を…に記録…」のボタンが出ます。押すと、追加・更新・削除の一覧を確認ダイアログに見せ、「記録する」を押したときだけ送ります。プレビューの後に内容が変わったときは、送らずに 409 を返します。
+- CLI は、cron から使えるよう、確認なしで送ります。`--dry-run` は一覧を表示するだけです。複数の記録先を付けると、順に送ります。
+
+```sh
+node src/cli.js sync [--week] [--date YYYY-MM-DD] [--from … --to …] [--tz <IANA名>] --gcal|--toggl|--clockify|--harvest [--dry-run]
+```
+
+- 期間を省くと今日(`--week` で、`--date`(省略すると今日)を含む週)です。画面と API の既定は過去 7 日(最大 93 日)です。
+- API は `GET /api/sync?target=&from=&to=&tz=` で下見(追加・更新・削除の一覧、`hash`、`previewText`)、`POST /api/sync`(`{ "target", "from", "to", "tz", "hash" }`)で記録です。`hash` がプレビューのものと違うときは 409 を返します。`GET /api/config` の `syncs` に、記録先ごとの状態(認証情報は含みません)があります。
+
+#### 重複させない仕組みと削除の規則
+
+- 送ったものは、キャッシュの `sync-<name>.json`(`sync-gcal.json` / `sync-toggl.json` / `sync-clockify.json` / `sync-harvest.json`)に、予定のキー → 相手側の ID と内容の hash として記録します。何度実行しても重複しません。
+- 内容が変わった予定(区間が伸びた、タイトルが変わった)は更新します。相手側で消されていた(404 / 410)ときは、作り直します。
+- 削除するのは、この対応表にある(Work Log が作った)もので、手元の区間が無くなったものだけです。手で作った予定・記録には触りません。
+- セッションごと見当たらないもの(Claude Code が古いログを自動で消した可能性があります)は、終わってから `KEEP_MISSING_AFTER_DAYS`(20 日)以内のものだけ削除します。それより古いものは残します。
+- 1 件ずつ順に送り、送れたものから対応表に記録します。途中で失敗しても、次はその続きからになります。同じ記録先への送信は 1 本ずつで、同時に押されても二重に作りません。
+- 通信は、リダイレクトを追わず、1 回のリクエストは 10 秒でタイムアウトします。429 のときは待ち時間を添えてエラーにします。
+
+#### 設定
+
+`~/.work-log/config.json` に、記録先ごとに書きます(任意)。どの記録先でも、次の 2 つを使えます。
+
+- `mergeSegments`: `true` にすると、セッションごとに 1 件にまとめます。既定は区間ごとです。
+- `minMinutes`: これより短い区間は記録しません(分)。既定は 1 です。
+
+```json
+{
+  "gcal": { "calendarId": "<記録専用のカレンダーの ID>", "colorId": "9", "mergeSegments": false, "minMinutes": 1 },
+  "toggl": { "workspaceId": 123456, "projects": { "work-log": 7890 } },
+  "clockify": { "workspaceId": "<ID>", "projects": { "work-log": "<プロジェクト ID>" }, "tagIds": ["<タグ ID>"], "billable": false, "baseUrl": "https://api.clockify.me/api/v1" },
+  "harvest": { "projectId": 1, "taskId": 2, "projects": { "work-log": { "projectId": 3, "taskId": 4 } }, "timeZone": "Asia/Tokyo" }
+}
+```
+
+- Google カレンダー: `calendarId`(環境変数 `GOOGLE_CALENDAR_ID` でも可。記録専用のカレンダーを作って、その ID を指定するのがおすすめです)、`colorId`。認証は OAuth のリフレッシュトークンで、スコープは `calendar.events` か `calendar.app.created` です。
+- Toggl Track: `workspaceId`(省くと既定のワークスペース)、`projects`(Work Log のプロジェクト名 → Toggl のプロジェクト ID)。タグは `work-log` とプロジェクト名を付けます。続けて送るときは、利用制限を避けて間隔を空けます。
+- Clockify: `workspaceId`(省くと `GET /user` の `activeWorkspace`)、`projects`(プロジェクト名 → ID)、`tagIds`(ID の配列)、`billable`、`baseUrl`(EU などデータ保存地域を選んだワークスペースの API の場所。`WORKLOG_CLOCKIFY_API` が優先)。
+- Harvest: `projectId` と `taskId`(必須)。`projects` に `{ "<プロジェクト名>": { "projectId", "taskId" } }` を書くと、プロジェクトごとに変えられます。時間は区間の長さを 0.01 時間に丸めて送ります。日付は `timeZone`(無ければこのマシンのタイムゾーン)の日付です。記録先が決まらない区間は、プレビューに「記録先の決まらないもの n 件」と出て、送りません。
+- 認証情報はサーバー側だけで使い、ブラウザには渡しません。
+
+## 拡張のしかた
+
+送り先・ログの取り込み元・記録先は、それぞれ 1 つの一覧(登録簿)にまとめています。サーバー・CLI・画面は一覧から作られるので、増やすときに他の場所を直す必要はありません。
+
+- 日報・週報の送り先: `src/destinations.js` の `DESTINATIONS` に 1 項目足します(`name`、`label`、`flag`、`env`、クライアントのクラス、本文を作る関数、プレビュー用の関数など)。CLI のオプション、API の `target`、画面のボタン、通知の対象に反映されます。
+- ログの取り込み元: `src/sources.js` の `SOURCES` に 1 項目足します(ログの場所と、一覧を作る関数、解析する関数)。
+- カレンダー・工数管理の記録先: `src/sync/index.js` の `SYNCS` に 1 項目足します(クライアントのクラスは `src/sync/base.js` を継承します)。
 
 ## 各値の算出方法
 
@@ -721,15 +1116,17 @@ Slack、Discord、Teams、Google Chat の API には、この開発環境から�
 - `links.json`: 詳細パネルから手で付け外ししたタスクです。
 - `github.json`: GitHub の issue / PR の取得結果(ETag を含む)です。形式と再確認の間隔は「タスク管理連携」の「課題管理サービス連携」を参照してください。
 - `tracker-<name>.json`: GitLab / Linear / Jira / Backlog / Notion の課題の取得結果です(`tracker-gitlab.json`、`tracker-notion.json` など。GitLab は ETag を含む)。再確認の間隔は GitHub と同じです。
-- `slack-notified.json`: Slack / Discord / Teams / Google Chat の通知の記録です。セッション終了の通知を送ったセッションを、送り先ごとに記録します(新しい 500 件まで)。形式は「Slack / Discord / Teams / Google Chat 連携」の「セッション終了の通知」を参照してください。
+- `slack-notified.json`: セッション終了の通知の記録です(Slack / Discord / Teams / Google Chat / Chatwork / Mattermost / Rocket.Chat / LINE WORKS / 汎用 Webhook / Obsidian)。セッション終了の通知を送ったセッションを、送り先ごとに記録します(新しい 500 件まで)。形式は「送り先連携」の「セッション終了の通知」を参照してください。
+- `confluence-pages.json` / `esa-pages.json` / `qiitateam-pages.json`: ページを作る送り先で、期間(日・週)と相手側のページ(記事)の対応です。同じ期間を送り直すと、新しく作らず、ここにあるページを更新します。消すと、次は新しいページを作ります。形式は「送り先連携」の「ドキュメントへの保存」を参照してください。
+- `sync-<name>.json`: カレンダー・工数管理サービスへの記録の対応表です(`sync-gcal.json`、`sync-toggl.json`、`sync-clockify.json`、`sync-harvest.json`)。予定のキーと、相手側の ID・内容の hash を覚えます。重複させない、消えた区間を削除する、ために使います。形式は「カレンダーと工数管理」を参照してください。
 
 ## ディレクトリ構成
 
 ```
 src/
-  cli.js         コマンドラインの入口 (serve / scan / summarize / hooks / hook / report)
+  cli.js         コマンドラインの入口 (serve / scan / summarize / hooks / hook / report / ical / sync)
   server.js      HTTP サーバー、API、ファイル監視、更新通知、フックからの通知の受け口
-  store.js       ログの収集、JSON キャッシュ、要約の管理、セッション状態の判定
+  store.js       ログの収集、JSON キャッシュ、要約の管理、セッション状態の判定、送り先・記録先の呼び出し
   paths.js       ログとキャッシュの場所
   hook.js        hooks から呼ばれる受け口。events.jsonl への追記とサーバーへの通知
   live.js        events.jsonl の取り込みと、作業中/入力待ち/完了の判定
@@ -742,14 +1139,41 @@ src/
     base.js        共通部分。キャッシュ、再確認の間隔、API 制限中の停止、同時取得数、タイムアウト
     providers.js   GitLab / Linear / Jira / Backlog / Notion の取得とコメント投稿
     index.js       サービスの一覧、設定の反映、`ABC-123` 形式の振り分け、タスクへの課題情報の付与
+  destinations.js 送り先の一覧(登録簿)。送り先を足すときは、ここに 1 項目足す
   slack.js       Slack への送信。Incoming Webhook と Bot トークン(chat.postMessage)に対応
   discord.js     Discord への送信。Webhook に対応(embeds で送る)
   teams.js       Teams への送信。Workflows と Incoming Webhook に対応(Adaptive Card で送る)
   googlechat.js  Google Chat への送信。スペースの Webhook に対応(テキストで送る)
-  report.js      日報・週報の集計と、Slack 用・Discord 用・Teams 用・Google Chat 用・ターミナル用の本文、セッション終了の通知の本文
+  chatwork.js    Chatwork への送信。API トークンとルーム ID で投稿
+  mattermost.js  Mattermost への送信。Incoming Webhook に対応
+  rocketchat.js  Rocket.Chat への送信。Incoming Webhook に対応
+  lineworks.js   LINE WORKS への送信。Bot API 2.0(サービスアカウントの JWT でトークンを取る)
+  webhook.js     汎用 Webhook への送信。JSON を POST し、鍵があれば HMAC-SHA256 の署名を付ける
+  confluence.js  Confluence Cloud へのページの保存(REST v2)。同じ期間は同じページを更新
+  esa.js         esa への記事の保存。同じ期間は同じ記事を更新
+  qiitateam.js   Qiita Team への記事の保存。同じ期間は同じ記事を更新
+  obsidian.js    Obsidian の Vault へのノートの書き込み(ネットワークは使わない)
+  docreport.js   日報・週報をページ形式(Markdown / Confluence の storage format)にする
+  docutil.js     ページを作る送り先の共通部品(期間とページの対応 PageMap、タイムアウト付きの fetch、作成か更新か)
+  report.js      日報・週報の集計と、送り先ごとの本文(Slack・Discord・Teams・Google Chat・Chatwork・Mattermost・Rocket.Chat・LINE WORKS・Webhook・ターミナル用)、セッション終了の通知の本文
+  ical.js        カレンダー(.ics、RFC 5545)の書き出し
+  sync/          カレンダー・工数管理サービスへの記録
+    index.js       記録先の一覧(登録簿)、下見(追加・更新・削除の一覧)、記録、対応表(sync-<name>.json)。記録先を足すときは、ここに 1 項目足す
+    base.js        共通部分。設定、HTTP の送り方(10 秒で打ち切り・リダイレクトしない・429 の扱い)、送る間隔
+    entries.js     セッションの区間から予定を組み立てる。期間の解釈
+    gcal.js        Google カレンダー(Calendar API v3)
+    toggl.js       Toggl Track(API v9)
+    clockify.js    Clockify(API v1)
+    harvest.js     Harvest(API v2)
   filter.js      セッション一覧の絞り込み(期間・プロジェクト・タグ・ツール・タスク・キーワード)
   parser.js      JSONL を 1 セッションの集計レコードに変換
+  sources.js     ログの取り込み元の一覧(登録簿)。取り込み元を足すときは、ここに 1 項目足す。Codex を含む
+  record.js      Claude Code 以外のログを、parser.js と同じ形のレコードにまとめる共通部品
   codex.js       Codex CLI のログ(rollout)を同じ集計レコードに変換。.zst の読み込みも担当
+  gemini.js      Gemini CLI のログを同じ集計レコードに変換
+  copilot.js     GitHub Copilot CLI のログを同じ集計レコードに変換
+  aider.js       Aider のチャット履歴を同じ集計レコードに変換
+  cursor.js      Cursor のチャットを同じ集計レコードに変換(非公式の形式。node:sqlite で読み取り)
   pricing.js     モデルの単価表と、利用量からの API 換算コストの計算。pricing.json による上書き
   tagger.js      ルールベースの作業種別・コンポーネント推定と要約
   summarizer.js  Claude API による要約 (オプトイン)
@@ -757,6 +1181,12 @@ src/
 public/          ブラウザ UI (index.html, app.js, costs.js, tasks.js, style.css)
                  costs.js はコストビュー (KPI、日別の積み上げ棒、表)
                  tasks.js はタスクビュー (タスクごとの集計表)
-test/            テスト
+test/            テスト (node --test。送り先・記録先・取り込み元ごとに <名前>.test.js)
+  fixtures/      テスト用のサンプルログ (Claude Code のログと、aider / copilot / cursor / gemini のサンプル)
+  dest-helpers.js  送り先のテストの共通部品
+  doc-helpers.js   ドキュメント系の送り先のテストの共通部品
+  *.test.js      parser / codex / gemini / copilot / aider / cursor / pricing / git / tasks / trackers / github / notion / hooks / store /
+                 slack / discord / teams / googlechat / chatwork / mattermost / rocketchat / lineworks / webhook /
+                 confluence / esa / qiitateam / obsidian / docreport / ical / sync
 docs/            ドキュメント (requirements.md)
 ```
