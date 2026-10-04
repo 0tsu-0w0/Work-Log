@@ -289,3 +289,7 @@ del { color: #cf222e; text-decoration: none; }
 .comment-dialog pre { background: var(--bg); border-radius: 8px; padding: 10px; max-height: 50vh; overflow: auto; white-space: pre-wrap; font-size: 12px; }
 .comment-dialog .actions { display: flex; justify-content: flex-end; gap: 8px; }
 .comment-dialog .primary { background: var(--text); color: var(--panel); border-color: var(--text); }
+
+/* Slack */
+.slack-send { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.slack-send .small { width: 100%; }

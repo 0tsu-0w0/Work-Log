@@ -213,7 +213,13 @@ function renderWeekStats() {
           <span class="v">${fmtDuration(ms)}</span>
         </div>`).join('') || '<p class="hint">この週のセッションはありません。</p>'}
     </div>
-    <p class="hint">ブロックを選ぶと、セッションの詳細を表示します。</p>`;
+    <p class="hint">ブロックを選ぶと、セッションの詳細を表示します。</p>
+    ${state.config?.slack?.configured
+      ? `<div class="slack-send"><span class="small">Slack(${esc(state.config.slack.destination)})に送る</span>
+          <button data-period="day">今日の日報…</button><button data-period="week">この週の週報…</button></div>
+          ${slackSent ? `<p class="small">${esc(slackSent.label)}を送りました${slackSent.url ? `: <a href="${esc(slackSent.url)}" target="_blank" rel="noopener noreferrer">Slack で開く</a>` : '。'}</p>` : ''}`
+      : '<p class="small">SLACK_WEBHOOK_URL などを設定すると、日報・週報を Slack に送れます。</p>'}`;
+  document.querySelectorAll('.slack-send button').forEach((b) => (b.onclick = () => sendReport(b.dataset.period, b)));
 }
 
 function weekActiveMs(s) {
@@ -413,6 +419,44 @@ async function loadTasks() {
 
 const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
+// 画面の自動更新で描き直しても、送った結果の表示は残す
+let slackSent = null;
+
+// 日報・週報を Slack に送る。送る本文をそのまま見せ、確認してから送る
+function localDate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+async function sendReport(period, button) {
+  const msg = (text, cls = 'small') => button.parentElement.insertAdjacentHTML('afterend', `<p class="${cls}">${esc(text)}</p>`);
+  const date = period === 'week' ? localDate(state.weekStart) : localDate(new Date());
+  const q = new URLSearchParams({ period, date, tz: TZ });
+  let preview;
+  try {
+    preview = await api(`/api/slack/report?${q}`);
+  } catch (err) {
+    return msg(err.message, 'error');
+  }
+  const dlg = $('comment-dialog');
+  $('comment-title').textContent = `Slack(${preview.slack.destination})に${period === 'week' ? '週報' : '日報'}を送ります`;
+  $('comment-note').textContent = `次の内容が送られます(Slack では見出しが太字、タスクがリンクになります)。チャンネルの参加者全員が読めます。${preview.slack.includeCost ? 'API 換算コストを含みます。' : ''}`;
+  $('comment-body').textContent = preview.previewText;
+  dlg.showModal();
+  dlg.onclose = async () => {
+    if (dlg.returnValue !== 'post') return;
+    button.disabled = true;
+    try {
+      const r = await api('/api/slack/report', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ period, date, tz: TZ, hash: preview.hash }) });
+      slackSent = { label: period === 'week' ? '週報' : '日報', url: r.url };
+      if (!state.selectedId) renderWeekStats();
+    } catch (err) {
+      msg(err.message, 'error');
+    } finally {
+      button.disabled = false;
+    }
+  };
+}
+
 // issue への作業記録の投稿。投稿する本文をそのまま見せ、確認してから送る
 async function commentOnIssue(taskId, button) {
   const msg = (text, cls = 'small') => button.insertAdjacentHTML('afterend', `<p class="${cls}">${esc(text)}</p>`);
@@ -424,7 +468,8 @@ async function commentOnIssue(taskId, button) {
   }
   if (!preview.authenticated) return msg(`${preview.providerLabel} への投稿には認証情報が必要です(README の「課題管理サービス連携」を参照)。`, 'error');
   const dlg = $('comment-dialog');
-  $('comment-target').textContent = `${preview.providerLabel} ${preview.target}`;
+  $('comment-title').textContent = `${preview.providerLabel} ${preview.target} にコメントを投稿します`;
+  $('comment-note').textContent = '次の内容がそのまま投稿されます。この課題(ページ)を見られる人全員が読めます。';
   $('comment-body').textContent = preview.body;
   dlg.showModal();
   dlg.onclose = async () => {

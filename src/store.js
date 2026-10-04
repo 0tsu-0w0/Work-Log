@@ -13,6 +13,8 @@ import { parseCodexFile } from './codex.js';
 import { extractTaskRefs, normalizeConfig, refsFromText, resolveRef, repoInfoOf } from './tasks.js';
 import { Trackers } from './trackers/index.js';
 import { buildWorkLog } from './worklog.js';
+import { Slack } from './slack.js';
+import { periodRange, buildReport, toSlack, sessionEndMessage, validTimeZone, todayIn } from './report.js';
 import { remoteWebBase, webBaseFromRemote } from './git.js';
 import { filterSessions } from './filter.js';
 import { mask } from './mask.js';
@@ -46,7 +48,9 @@ export function fingerprint(session) {
 }
 
 export class Store {
-  constructor({ projectsDir, cacheDir, codexDir = null, github = null } = defaultPaths()) {
+  constructor({ projectsDir, cacheDir, codexDir = null, github = null, slack = null } = defaultPaths()) {
+    this.slack = slack || new Slack();
+    this.slackNotifiedFile = path.join(cacheDir, 'slack-notified.json');
     this.trackers = new Trackers({ cacheDir, github });
     this.github = this.trackers.github;
     this.projectsDir = projectsDir;
@@ -85,6 +89,7 @@ export class Store {
     }
     this.taskCfg = normalizeConfig(json);
     this.trackers.setConfig(json.tasks || {});
+    this.slack.setConfig(json.slack || {});
   }
 
   // 利用者の単価表(任意)。読めなければ組み込みの単価だけを使う
@@ -390,6 +395,56 @@ export class Store {
       hash: createHash('sha256').update(`${provider.name}\n${body}`).digest('hex').slice(0, 16),
       ref: { id: t.id, repo: t.repo, number: t.number, mr: t.mr, pageId: t.pageId },
     };
+  }
+
+  // 日報・週報(Slack 用)。params: { period: 'day' | 'week', date: 'YYYY-MM-DD', tz }
+  async report({ period = 'day', date, tz, waitMs = 1500 } = {}) {
+    const timeZone = validTimeZone(tz);
+    const range = periodRange({ period: period === 'week' ? 'week' : 'day', date: date || todayIn(timeZone), timeZone });
+    const from = new Date(range.from).toISOString();
+    const to = new Date(range.to).toISOString();
+    const sessions = filterSessions(this.sessions(), { from, to });
+    const tasks = await this.tasks({ from, to }, { waitMs });
+    const data = buildReport({ sessions, tasks, costs: this.costs({ from, to }), range });
+    const st = this.slack.status();
+    const msg = toSlack(data, { includeCost: st.includeCost, maxSessions: Number(this.slack.cfg.maxSessions) || 20 });
+    // 本文は秘匿情報をマスキングしてから送る
+    const masked = { text: mask(msg.text), blocks: JSON.parse(mask(JSON.stringify(msg.blocks))), preview: mask(msg.preview) };
+    return { ...masked, range, totals: data.totals, slack: st, hash: createHash('sha256').update(JSON.stringify(masked.blocks)).digest('hex').slice(0, 16) };
+  }
+
+  // プレビューと同じ内容のときだけ送る
+  async postReport(params, hash) {
+    const r = await this.report(params);
+    if (r.hash !== hash) throw Object.assign(new Error('プレビューの後に内容が変わりました。もう一度確認してください'), { status: 409 });
+    return this.slack.post({ text: r.text, blocks: r.blocks });
+  }
+
+  // セッション終了の通知(config.json の slack.notify が "session_end" のとき)。hooks の SessionEnd を受けたセッションが対象。
+  // 古い終了まで一度に送らないよう、終了から2時間以内のものだけ送る。送ったものは記録して二度送らない
+  async notifySessionEnds(now = Date.now()) {
+    const st = this.slack.status();
+    if (st.notify !== 'session_end' || !st.configured) return 0;
+    const sent = new Set((await readJson(this.slackNotifiedFile, [])) || []);
+    const subIdx = this.subagentIndex();
+    let count = 0;
+    for (const raw of this.rawSessions()) {
+      const hook = this.hooks.get(raw.id);
+      if (hook?.lastEvent !== 'SessionEnd' || !hook.endedAt) continue;
+      const key = `${raw.id}@${hook.endedAt}`;
+      if (sent.has(key) || now - Date.parse(hook.endedAt) > 2 * 60 * 60 * 1000) continue;
+      sent.add(key); // 失敗しても繰り返し送らない
+      const v = this.view(raw, now, subIdx);
+      try {
+        const msg = sessionEndMessage({ ...v, tasks: await this.resolvedTasks(v) }, { includeCost: st.includeCost });
+        await this.slack.post({ text: mask(msg.text), blocks: JSON.parse(mask(JSON.stringify(msg.blocks))) });
+        count++;
+      } catch (err) {
+        console.warn(`[work-log] Slack への通知に失敗: ${err.message}`);
+      }
+    }
+    await writeJsonAtomic(this.slackNotifiedFile, [...sent].slice(-500));
+    return count;
   }
 
   // プレビューと同じ内容のときだけ投稿する(見せた内容と違うものを投稿しないため)

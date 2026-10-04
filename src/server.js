@@ -11,6 +11,7 @@ export { filterSessions };
 import { llmAvailable, DEFAULT_MODEL } from './summarizer.js';
 import { SERVER_FILE } from './hook.js';
 import { PRICING_AS_OF, PRICING_SOURCE } from './pricing.js';
+import { plainFromMrkdwn } from './report.js';
 import { status as hooksStatus, settingsPath } from './install.js';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
@@ -63,6 +64,7 @@ export function createServer(store, { env = process.env } = {}) {
         hooks: { installed: hooks.events, lastEventAt: store.hooks.lastEventAt },
         github: await store.github.status(),
         trackers: await store.trackers.status(),
+        slack: store.slack.status(),
       });
     }
     if (req.method === 'GET' && parts[1] === 'sessions' && parts.length === 2) {
@@ -113,6 +115,21 @@ export function createServer(store, { env = process.env } = {}) {
         return send(res, 400, { error: err.message });
       }
     }
+    // Slack の日報・週報: GET でプレビュー、POST { period, date, tz, hash } で送信
+    if (parts[1] === 'slack' && parts[2] === 'report') {
+      try {
+        if (req.method === 'GET') {
+          const r = await store.report(Object.fromEntries(url.searchParams));
+          return send(res, 200, { preview: r.preview, previewText: plainFromMrkdwn(r.preview), hash: r.hash, totals: r.totals, slack: r.slack, range: { period: r.range.period, start: r.range.start } });
+        }
+        if (req.method === 'POST') {
+          const body = JSON.parse((await readBody(req)) || '{}');
+          return send(res, 200, await store.postReport({ period: body.period, date: body.date, tz: body.tz }, String(body.hash || '')));
+        }
+      } catch (err) {
+        return send(res, err.status || 400, { error: err.message });
+      }
+    }
     if (req.method === 'GET' && parts[1] === 'costs') {
       const p = Object.fromEntries(url.searchParams);
       return send(res, 200, out({ ...store.costs(p), pricing: { asOf: PRICING_AS_OF, source: PRICING_SOURCE } }));
@@ -138,6 +155,7 @@ export function createServer(store, { env = process.env } = {}) {
       req.resume();
       const r = await store.scan();
       if (r.changed || r.hookEvents) broadcast('update');
+      if (r.hookEvents) store.notifySessionEnds().catch(() => {});
       return send(res, 200, r);
     }
     if (req.method === 'GET' && parts[1] === 'events') {
@@ -191,6 +209,7 @@ export function createServer(store, { env = process.env } = {}) {
     timer = setTimeout(async () => {
       const r = await store.scan().catch(() => ({ changed: 0 }));
       if (r.changed || r.hookEvents) broadcast('update');
+      if (r.hookEvents) store.notifySessionEnds().catch(() => {});
     }, 500);
   };
   const watchDir = async (dir, quiet) => {
