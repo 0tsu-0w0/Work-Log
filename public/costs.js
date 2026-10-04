@@ -1,7 +1,7 @@
 // コストビュー: KPI、日別の積み上げ棒グラフ(モデル系統別)、内訳の表。
 // 色はモデル系統に固定で割り当てる(順位で塗り替えない)。系統の並びは配色検証済みの順。
-const FAMILIES = ['Opus', 'Sonnet', 'Haiku', 'Fable', 'その他'];
-const FAMILY_VAR = { Opus: '--series-1', Sonnet: '--series-2', Haiku: '--series-3', Fable: '--series-4', その他: '--series-other' };
+const FAMILIES = ['Opus', 'Sonnet', 'Haiku', 'Fable', 'OpenAI', 'その他'];
+const FAMILY_VAR = { Opus: '--series-1', Sonnet: '--series-2', Haiku: '--series-3', Fable: '--series-4', OpenAI: '--series-5', その他: '--series-other' };
 const TOKEN_LABELS = ['入力', '出力', 'キャッシュ読込', 'キャッシュ書込(5分)', 'キャッシュ書込(1時間)'];
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -127,7 +127,7 @@ export function renderCosts(root, data, { days, onSession }) {
       <p class="small">API で使った場合の換算額です(Pro/Max などの定額プランの請求額ではありません)。単価は ${esc(pricing.asOf)} 時点の
         <a href="${esc(pricing.source)}" target="_blank" rel="noopener noreferrer">公式価格</a>。サブエージェントを含みます。
         ${estimated ? '一部の出力トークンはログに確定値がないため、本文の長さから見積もっています。' : ''}
-        ${unknownModels.length ? `単価不明のモデル(${unknownModels.map(esc).join(', ')})は合計に含みません。` : ''}</p>
+        ${unknownModels.length ? `単価不明のモデル(${unknownModels.map(esc).join(', ')})は合計に含みません。<code>~/.work-log/pricing.json</code> に単価を書くと計算します(README の「コスト」を参照)。` : ''}</p>
     </div>
     <div class="kpis">
       <div class="kpi"><span>合計</span><b>${usd(total)}</b></div>

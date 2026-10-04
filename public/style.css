@@ -4,6 +4,7 @@
   --series-2: #eb6834;
   --series-3: #1baf7a;
   --series-4: #eda100;
+  --series-5: #e87ba4;
   --series-other: #898781;
   --bg: #f7f7f5;
   --panel: #ffffff;
@@ -29,6 +30,7 @@
     --series-2: #d95926;
     --series-3: #199e70;
     --series-4: #c98500;
+    --series-5: #d55181;
     color-scheme: dark;
   }
 }
@@ -66,7 +68,7 @@ button:disabled { opacity: .5; cursor: default; }
 .toolbar h1 { font-size: 16px; margin: 0; }
 .nav, .filters { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .filters { margin-left: auto; }
-.filters input { width: 220px; }
+.filters input { width: 170px; }
 .range { margin-left: 8px; font-weight: 600; }
 .live { color: var(--muted); font-size: 10px; }
 .live.on { color: #22a06b; }
@@ -240,3 +242,8 @@ del { color: #cf222e; text-decoration: none; }
 .top-sessions li:hover .t { text-decoration: underline; }
 .top-sessions li > * { margin-right: 8px; }
 .top-sessions b { font-variant-numeric: tabular-nums; }
+
+/* Codex のセッションは 45° の斜線で見分けられるようにする(色だけに頼らない) */
+.block.codex { background-image: repeating-linear-gradient(45deg, rgba(255,255,255,.35) 0 3px, transparent 3px 7px); }
+.badge.tool { color: var(--muted); }
+.cost-head code { font-size: 11px; }

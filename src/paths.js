@@ -7,5 +7,7 @@ export function defaultPaths(env = process.env) {
   return {
     projectsDir: env.WORKLOG_PROJECTS_DIR || path.join(env.CLAUDE_CONFIG_DIR || path.join(home, '.claude'), 'projects'),
     cacheDir: env.WORKLOG_CACHE_DIR || path.join(home, '.work-log'),
+    // Codex CLI のログ。CODEX_HOME(既定 ~/.codex)の sessions / archived_sessions
+    codexDir: env.WORKLOG_CODEX_DIR || env.CODEX_HOME || path.join(home, '.codex'),
   };
 }

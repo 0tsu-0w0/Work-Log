@@ -4,6 +4,7 @@ const $ = (id) => document.getElementById(id);
 const HOUR_PX = 48;
 const MIN_BLOCK_PX = 14;
 const DAY_NAMES = ['月', '火', '水', '木', '金', '土', '日'];
+const TOOL_LABEL = { claude: 'Claude Code', codex: 'Codex' };
 const STATUS_LABEL = { working: '作業中', waiting: '入力待ち', done: '完了' };
 const SOURCE_LABEL = { startup: '新規起動', resume: '再開', clear: '/clear 後', compact: 'コンパクト後', fork: 'フォーク' };
 const END_LABEL = { clear: '/clear', resume: '別セッションを再開', logout: 'ログアウト', prompt_input_exit: '終了操作', other: 'その他' };
@@ -12,6 +13,7 @@ const state = {
   weekStart: startOfWeek(new Date()),
   project: '',
   tag: '',
+  tool: '',
   q: '',
   selectedId: null,
   view: 'calendar', // calendar | cost
@@ -76,8 +78,12 @@ async function loadWeek() {
   });
   if (state.project) params.set('project', state.project);
   if (state.tag) params.set('tag', state.tag);
+  if (state.tool) params.set('tool', state.tool);
   const data = await api(`/api/sessions?${params}`);
   state.sessions = data.sessions;
+  // ツールが1種類しか無いときはツールの絞り込みを出さない
+  $('tool').hidden = data.tools.length < 2 && !state.tool;
+  $('tool').innerHTML = '<option value="">すべてのツール</option>' + data.tools.map((t) => `<option value="${esc(t)}" ${t === state.tool ? 'selected' : ''}>${esc(TOOL_LABEL[t] || t)}</option>`).join('');
   fillSelect($('project'), data.projects, state.project, 'すべてのプロジェクト');
   fillSelect($('tag'), data.tags, state.tag, 'すべてのタグ');
   renderCalendar();
@@ -171,7 +177,7 @@ function layoutLanes(pieces) {
 function blockEl(p) {
   const { s } = p;
   const el = document.createElement('div');
-  el.className = `block ${s.status} ${s.id === state.selectedId ? 'selected' : ''}`;
+  el.className = `block ${s.status} ${s.tool === 'codex' ? 'codex' : ''} ${s.id === state.selectedId ? 'selected' : ''}`;
   el.dataset.id = s.id;
   el.style.top = `${p.top}px`;
   el.style.height = `${p.height}px`;
@@ -179,7 +185,7 @@ function blockEl(p) {
   el.style.width = `calc(${100 / p.lanes}% - 4px)`;
   el.style.background = projectColor(s.project);
   el.title = `${s.displayTitle}\n${s.project} · ${fmtTime(new Date(p.a))}〜${fmtTime(new Date(p.b))} · ${STATUS_LABEL[s.status]}`;
-  el.innerHTML = `<div class="t">${esc(s.displayTitle)}</div>` + (p.height > 30 ? `<div class="m">${esc(s.project)} · ${fmtTime(new Date(p.a))}</div>` : '');
+  el.innerHTML = `<div class="t">${esc(s.displayTitle)}</div>` + (p.height > 30 ? `<div class="m">${s.tool === 'codex' ? 'Codex · ' : ''}${esc(s.project)} · ${fmtTime(new Date(p.a))}</div>` : '');
   el.addEventListener('click', () => showDetail(s.id));
   return el;
 }
@@ -239,6 +245,7 @@ async function showDetail(id, { quiet = false } = {}) {
     <h2>${esc(s.displayTitle)}</h2>
     <div>
       <span class="badge ${s.status}">${STATUS_LABEL[s.status]}</span>
+      <span class="badge tool">${esc(TOOL_LABEL[s.tool] || s.tool)}</span>
       <span class="badge type tag" data-tag="${esc(s.workType)}">${esc(s.workType)}</span>
       ${s.components.map((c) => `<span class="badge tag" data-tag="${esc(c)}">${esc(c)}</span>`).join('')}
     </div>
@@ -262,7 +269,7 @@ async function showDetail(id, { quiet = false } = {}) {
     <p class="meta">ツール: ${esc(tools || 'なし')}</p>
     <p class="meta">トークン: 入力 ${fmtNum(s.tokens.input + s.tokens.cacheRead + s.tokens.cacheCreation)}(キャッシュ読込 ${fmtNum(s.tokens.cacheRead)})/ 出力 ${fmtNum(s.tokens.output)}</p>
     <p class="meta">モデル: ${esc(s.models.join(', ') || '-')}</p>
-    <p class="meta">API 換算コスト: ${fmtUsd(s.cost.usd)}${s.cost.subagents ? `(サブエージェント ${s.cost.subagents}件 ${fmtUsd(s.cost.subagentUsd)} を含む)` : ''}${s.cost.estimatedOutputTokens ? ' · 一部見積もり' : ''}${s.cost.unknownModels.length ? ` · 単価不明: ${esc(s.cost.unknownModels.join(', '))}` : ''}</p>
+    <p class="meta">API 換算コスト: ${s.cost.usd === 0 && s.cost.unknownModels.length ? '単価不明(~/.work-log/pricing.json で設定)' : fmtUsd(s.cost.usd)}${s.cost.subagents ? `(サブエージェント ${s.cost.subagents}件 ${fmtUsd(s.cost.subagentUsd)} を含む)` : ''}${s.cost.estimatedOutputTokens ? ' · 一部見積もり' : ''}${s.cost.unknownModels.length ? ` · 単価不明: ${esc(s.cost.unknownModels.join(', '))}` : ''}</p>
     ${s.hook ? `<p class="meta">hooks: ${s.hook.source ? `開始 ${esc(SOURCE_LABEL[s.hook.source] || s.hook.source)} · ` : ''}${s.hook.endedAt ? `終了 ${fmtTime(new Date(s.hook.endedAt))}(${esc(END_LABEL[s.hook.endReason] || s.hook.endReason || '-')}) · ` : ''}最終イベント ${esc(s.hook.lastEvent)} ${fmtTime(new Date(s.hook.lastEventAt))}</p>` : ''}
     <p class="meta small">${esc(s.cwd || '')}<br>${esc(s.id)}</p>`;
 
@@ -330,6 +337,7 @@ async function runSearch() {
   }
   const params = new URLSearchParams({ q });
   if (state.project) params.set('project', state.project);
+  if (state.tool) params.set('tool', state.tool);
   if (state.tag) params.set('tag', state.tag);
   const { sessions } = await api(`/api/sessions?${params}`);
   box.hidden = false;
@@ -369,6 +377,7 @@ async function loadCosts() {
   const { from, to, days, label } = costPeriod();
   const params = new URLSearchParams({ from: from.toISOString(), to: to.toISOString() });
   if (state.project) params.set('project', state.project);
+  if (state.tool) params.set('tool', state.tool);
   const data = await api(`/api/costs?${params}`);
   if (label) $('range').textContent = label;
   redrawCosts = renderCosts($('costs'), data, { days, onSession: (id) => showDetail(id) });
@@ -423,6 +432,7 @@ $('today').onclick = () => {
   refresh();
 };
 $('project').onchange = (e) => { state.project = e.target.value; refresh(); runSearch(); };
+$('tool').onchange = (e) => { state.tool = e.target.value; refresh(); runSearch(); };
 $('tag').onchange = (e) => { state.tag = e.target.value; loadWeek(); runSearch(); };
 $('q').oninput = (e) => {
   state.q = e.target.value;

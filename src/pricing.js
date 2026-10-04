@@ -35,18 +35,48 @@ const MODELS = [
 // "claude-opus-4-5-20251101" のような日付付きIDや、"anthropic.claude-…"・"…[1m]" のような表記にも当てる。
 // 長いIDから順に照合するので "claude-opus-4" が "claude-opus-4-5" を横取りしない。
 const BY_LENGTH = [...MODELS].sort((a, b) => b[0].length - a[0].length);
+const OPENAI_RE = /^(gpt-|o\d|codex-)/;
+let overrides = [];
 
-export function priceFor(model) {
-  if (typeof model !== 'string') return null;
-  const id = model.toLowerCase().replace(/^.*?(claude-)/, '$1');
-  for (const [prefix, price] of BY_LENGTH) {
+// 利用者が用意した単価表(~/.work-log/pricing.json)。Codex(OpenAI)のモデルや、価格改定への追従に使う。
+// 形式: { "<モデルIDの前方一致>": { "input": 入力単価, "output": 出力単価, "cacheRead": キャッシュ読込単価 }, ... }(USD / 100万トークン)
+// cacheRead を省くと入力単価の0.1倍、cacheWrite を省くと入力単価の1.25倍(5分)/2倍(1時間)で計算する
+export function setPricingOverrides(map = {}) {
+  overrides = Object.entries(map)
+    .filter(([, v]) => v && Number.isFinite(v.input) && Number.isFinite(v.output))
+    .map(([prefix, v]) => [
+      prefix.toLowerCase(),
+      {
+        family: v.family || (OPENAI_RE.test(prefix.toLowerCase()) ? 'OpenAI' : priceFor(prefix)?.family || 'その他'),
+        input: v.input,
+        output: v.output,
+        cacheRead: Number.isFinite(v.cacheRead) ? v.cacheRead : v.input * 0.1,
+        cacheWrite: Number.isFinite(v.cacheWrite) ? v.cacheWrite : null,
+        geo: false,
+        custom: true,
+      },
+    ])
+    .sort((a, b) => b[0].length - a[0].length);
+}
+
+function match(table, id) {
+  for (const [prefix, price] of table) {
     if (id === prefix || id.startsWith(prefix + '-') || id.startsWith(prefix + '[') || id.startsWith(prefix + '@')) return price;
   }
   return null;
 }
 
+export function priceFor(model) {
+  if (typeof model !== 'string') return null;
+  const raw = model.toLowerCase();
+  const id = raw.replace(/^.*?(claude-)/, '$1');
+  return match(overrides, raw) || match(overrides, id) || match(BY_LENGTH, id);
+}
+
 export function modelFamily(model) {
-  return priceFor(model)?.family || 'その他';
+  const p = priceFor(model);
+  if (p) return p.family;
+  return typeof model === 'string' && OPENAI_RE.test(model.toLowerCase()) ? 'OpenAI' : 'その他';
 }
 
 // tokens: [input, output, cacheRead, cacheWrite5m, cacheWrite1h, webSearches]
@@ -56,9 +86,10 @@ export function costOf(model, tokens, { fast = false, us = false } = {}) {
   const [input, output, cacheRead, cw5m, cw1h, searches] = tokens;
   const base = fast && p.fast ? p.fast : p;
   // fast モードでもキャッシュ読み込みは通常単価に対する比率のまま、fast の入力単価に掛かる
-  const readRate = (p.cacheRead / p.input) * base.input;
-  const usd =
-    (input * base.input + output * base.output + cacheRead * readRate + cw5m * base.input * 1.25 + cw1h * base.input * 2) / 1e6;
+  const readRate = p.input ? (p.cacheRead / p.input) * base.input : p.cacheRead;
+  const write5m = p.cacheWrite ?? base.input * 1.25;
+  const write1h = p.cacheWrite ?? base.input * 2;
+  const usd = (input * base.input + output * base.output + cacheRead * readRate + cw5m * write5m + cw1h * write1h) / 1e6;
   return usd * (us && p.geo ? 1.1 : 1) + (searches || 0) * WEB_SEARCH_PER_REQUEST;
 }
 

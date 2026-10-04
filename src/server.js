@@ -13,7 +13,7 @@ import { status as hooksStatus, settingsPath } from './install.js';
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
 const LIST_FIELDS = [
-  'id', 'project', 'cwd', 'gitBranch', 'displayTitle', 'start', 'end', 'segments', 'activeMs', 'status', 'hook',
+  'id', 'tool', 'project', 'cwd', 'gitBranch', 'displayTitle', 'start', 'end', 'segments', 'activeMs', 'status', 'hook',
   'messageCount', 'commits', 'workType', 'components', 'summarySource', 'cost',
 ];
 
@@ -24,13 +24,14 @@ function maskDeep(v) {
   return v;
 }
 
-export function filterSessions(sessions, { from, to, project, tag, q } = {}) {
+export function filterSessions(sessions, { from, to, project, tag, tool, q } = {}) {
   const fromMs = from ? Date.parse(from) : -Infinity;
   const toMs = to ? Date.parse(to) : Infinity;
   const needle = q?.trim().toLowerCase();
   return sessions.filter((s) => {
     if (Date.parse(s.end) < fromMs || Date.parse(s.start) >= toMs) return false;
     if (project && s.project !== project) return false;
+    if (tool && (s.tool || 'claude') !== tool) return false;
     if (tag && s.workType !== tag && !s.components.includes(tag)) return false;
     if (needle) {
       const commits = (s.commitList || []).flatMap((c) => [c.hash, c.subject]);
@@ -65,6 +66,7 @@ export function createServer(store, { env = process.env } = {}) {
         model: env.WORKLOG_MODEL || DEFAULT_MODEL,
         masking: shouldMask,
         projectsDir: store.projectsDir,
+        codexDir: store.codexDir,
         hooks: { installed: hooks.events, lastEventAt: store.hooks.lastEventAt },
       });
     }
@@ -74,7 +76,8 @@ export function createServer(store, { env = process.env } = {}) {
       const list = filterSessions(all, p).map((s) => pick(s, LIST_FIELDS));
       const projects = [...new Set(all.map((s) => s.project))].sort();
       const tags = [...new Set(all.flatMap((s) => [s.workType, ...s.components]))].filter(Boolean).sort();
-      return send(res, 200, out({ sessions: list, projects, tags }));
+      const tools = [...new Set(all.map((s) => s.tool || 'claude'))].sort();
+      return send(res, 200, out({ sessions: list, projects, tags, tools }));
     }
     if (req.method === 'GET' && parts[1] === 'costs') {
       const p = Object.fromEntries(url.searchParams);
@@ -148,13 +151,18 @@ export function createServer(store, { env = process.env } = {}) {
       if (r.changed || r.hookEvents) broadcast('update');
     }, 500);
   };
-  (async () => {
+  const watchDir = async (dir, quiet) => {
     try {
-      for await (const _ of watch(store.projectsDir, { recursive: true, signal: ac.signal })) trigger();
+      for await (const _ of watch(dir, { recursive: true, signal: ac.signal })) trigger();
     } catch (err) {
-      if (err.name !== 'AbortError') console.warn(`[work-log] ファイル監視を開始できません(${err.code || err.message})。定期スキャンのみで動作します`);
+      // Codex を使っていない環境ではフォルダが無いのが普通なので、黙って定期スキャンに任せる
+      if (err.name !== 'AbortError' && !(quiet && err.code === 'ENOENT')) {
+        console.warn(`[work-log] ${dir} の監視を開始できません(${err.code || err.message})。定期スキャンのみで動作します`);
+      }
     }
-  })();
+  };
+  watchDir(store.projectsDir, false);
+  if (store.codexDir) watchDir(path.join(store.codexDir, 'sessions'), true);
   const poll = setInterval(trigger, 60 * 1000); // 監視漏れと「進行中→完了」の切り替え用
   // 進行中表示を更新するため、クライアントにも定期的に再取得させる
   const tick = setInterval(() => broadcast('tick'), 60 * 1000);

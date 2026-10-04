@@ -8,12 +8,13 @@ import { heuristicSummary } from './tagger.js';
 import { summarize } from './summarizer.js';
 import { HookLog, deriveStatus } from './live.js';
 import { sessionGit } from './git.js';
-import { costOf, modelFamily, sessionCost } from './pricing.js';
+import { costOf, modelFamily, sessionCost, setPricingOverrides } from './pricing.js';
+import { parseCodexFile } from './codex.js';
 
 // Git の情報は外部(手作業のコミットなど)でも変わるので、短時間だけ使い回す
 const GIT_CACHE_MS = 60 * 1000;
 
-const CACHE_VERSION = 3; // 解析結果の形が変わったら上げる(古いキャッシュを捨てて再解析させる)
+const CACHE_VERSION = 4; // 解析結果の形が変わったら上げる(古いキャッシュを捨てて再解析させる)
 
 export { defaultPaths };
 
@@ -38,8 +39,9 @@ export function fingerprint(session) {
 }
 
 export class Store {
-  constructor({ projectsDir, cacheDir } = defaultPaths()) {
+  constructor({ projectsDir, cacheDir, codexDir = null } = defaultPaths()) {
     this.projectsDir = projectsDir;
+    this.codexDir = codexDir;
     this.cacheDir = cacheDir;
     this.hooks = new HookLog(cacheDir);
     this.cacheFile = path.join(cacheDir, 'sessions.json');
@@ -49,6 +51,41 @@ export class Store {
     this.loaded = false;
     this.scanning = null;
     this.gitCache = new Map(); // sessionId -> { key, at, promise }
+  }
+
+  // 利用者の単価表(任意)。読めなければ組み込みの単価だけを使う
+  async loadPricing() {
+    const file = path.join(this.cacheDir, 'pricing.json');
+    try {
+      setPricingOverrides(JSON.parse(await readFile(file, 'utf8')));
+    } catch (err) {
+      if (err.code !== 'ENOENT') console.warn(`[work-log] ${file} を読めません: ${err.message}`);
+      setPricingOverrides({});
+    }
+  }
+
+  // Codex のログ: <codexDir>/sessions/YYYY/MM/DD/rollout-*.jsonl(.zst) と archived_sessions/
+  async listCodexFiles() {
+    if (!this.codexDir) return [];
+    const out = [];
+    const walk = async (dir, depth) => {
+      let entries;
+      try {
+        entries = await readdir(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const e of entries) {
+        const p = path.join(dir, e.name);
+        if (e.isDirectory() && depth < 4) await walk(p, depth + 1);
+        else if (e.isFile() && /^rollout-.*\.jsonl(\.zst)?$/.test(e.name)) out.push({ file: p, tool: 'codex' });
+      }
+    };
+    await walk(path.join(this.codexDir, 'sessions'), 0);
+    await walk(path.join(this.codexDir, 'archived_sessions'), 0);
+    // 圧縮済みと未圧縮が両方あるときは未圧縮(書き込み中の可能性がある方)を使う
+    const plain = new Set(out.filter((f) => !f.file.endsWith('.zst')).map((f) => f.file));
+    return out.filter((f) => !(f.file.endsWith('.zst') && plain.has(f.file.slice(0, -4))));
   }
 
   async load() {
@@ -115,10 +152,11 @@ export class Store {
       console.warn(`[work-log] フックイベントの取り込みに失敗: ${err.message}`);
       return 0;
     });
-    const found = await this.listLogFiles();
+    await this.loadPricing();
+    const found = [...(await this.listLogFiles()), ...(await this.listCodexFiles())];
     const seen = new Set();
     let changed = 0;
-    for (const { file, projectDir, parentId } of found) {
+    for (const { file, projectDir, parentId, tool } of found) {
       seen.add(file);
       let st;
       try {
@@ -129,7 +167,8 @@ export class Store {
       const cached = this.files[file];
       if (cached && cached.mtimeMs === st.mtimeMs && cached.size === st.size) continue;
       try {
-        const session = await parseSessionFile(file, projectDir);
+        const session = tool === 'codex' ? await parseCodexFile(file) : await parseSessionFile(file, projectDir);
+        session.tool ||= 'claude';
         if (parentId) session.parentId = parentId;
         this.files[file] = { mtimeMs: st.mtimeMs, size: st.size, session };
         changed++;
@@ -165,7 +204,7 @@ export class Store {
   }
 
   // 期間内のコストを、時間・モデル・プロジェクト単位で集計する(サブエージェントは親のプロジェクトに含める)
-  costs({ from, to, project } = {}) {
+  costs({ from, to, project, tool } = {}) {
     const fromKey = from ? new Date(from).toISOString().slice(0, 13) : '';
     const toKey = to ? new Date(to).toISOString().slice(0, 13) : '\uffff';
     const parents = new Map(this.rawSessions().map((x) => [x.id, x]));
@@ -176,6 +215,7 @@ export class Store {
     for (const { session } of Object.values(this.files)) {
       const owner = session.parentId ? parents.get(session.parentId) : session;
       if (!owner || (project && owner.project !== project)) continue;
+      if (tool && (owner.tool || 'claude') !== tool) continue;
       for (const [key, tokens] of Object.entries(session.usage || {})) {
         const [hour, model, fast, us] = key.split('|');
         if (hour < fromKey || hour >= toKey) continue;
@@ -183,7 +223,7 @@ export class Store {
         const usd = costOf(model, tokens, { fast: fast === 'fast', us: us === 'us' });
         if (usd === null) unknownModels.add(model);
         const bkey = `${hour}|${model}|${owner.project}`;
-        const b = buckets.get(bkey) || { hour, model, family: modelFamily(model), project: owner.project, tokens: [0, 0, 0, 0, 0, 0], usd: 0, priced: usd !== null };
+        const b = buckets.get(bkey) || { hour, model, family: modelFamily(model), project: owner.project, tool: owner.tool || 'claude', tokens: [0, 0, 0, 0, 0, 0], usd: 0, priced: usd !== null };
         tokens.forEach((v, i) => (b.tokens[i] += v));
         b.usd += usd || 0;
         buckets.set(bkey, b);
