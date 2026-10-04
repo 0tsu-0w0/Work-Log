@@ -51,7 +51,9 @@ function outputText(output) {
     } catch {
       // 素の文字列
     }
-    return { text: output };
+    // 0.1xx の exec_command: "Chunk ID: …\nWall time: …\nProcess exited with code 1\n…\nOutput:\n…"
+    const m = output.match(/^Process exited with code (-?\d+)$/m);
+    return { text: output, exitCode: m ? Number(m[1]) : undefined };
   }
   return { text: textOfContent(output) };
 }
@@ -160,6 +162,9 @@ export function parseCodexText(text, { file = '' } = {}) {
         if (!Number.isNaN(t)) timestamps.push(t);
       } else if (p.type === 'token_count' && p.info) {
         s.tokenCounts.push({ ts, model: s.model, info: p.info });
+      } else if (p.type === 'item_completed' && p.item?.type === 'CommandExecution' && typeof p.item.exit_code === 'number') {
+        // 0.1xx: コマンドの結果は item_completed(CommandExecution)にも入る(id は call_id と同じ)
+        onResult(p.item.id, p.item.aggregated_output ?? [p.item.stdout, p.item.stderr].filter(Boolean).join('\n'), p.item.exit_code !== 0, ts);
       } else if (p.type === 'exec_command_end') {
         onResult(p.call_id, p.aggregated_output || [p.stdout, p.stderr].filter(Boolean).join('\n'), p.exit_code !== 0, ts);
       }

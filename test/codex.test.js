@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import zlib from 'node:zlib';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseCodexText, parseCodexFile, commandFromArgs, filesFromPatch } from '../src/codex.js';
 import { setPricingOverrides, costOf, modelFamily } from '../src/pricing.js';
 import { Store } from '../src/store.js';
@@ -138,4 +139,38 @@ test('Codex のログ(圧縮を含む)を Claude Code のログと一緒に集�
   assert.equal(filterSessions(sessions, { tool: 'codex' }).length, 2);
   assert.equal(filterSessions(sessions, { tool: 'claude' }).length, 0);
   assert.equal((await parseCodexFile(path.join(day, `rollout-2026-10-04T10-00-00-${ID}.jsonl`))).commits, 1);
+});
+
+// 本物の Codex CLI 0.160.0(codex exec)が書いた rollout(偽の Responses API サーバーにつないで動かした。パスだけ置き換えた)
+//   01a1074f…: 1回目の依頼で exec_command の git commit が成功(2bd9b9f)、resume した2回目は変更が無く git commit が失敗(終了コード1)
+//   01a10751…: 別のセッションで git commit が成功(43a324b)
+// この版の exec では event_msg の user_message は書かれず、コマンドの結果は item_completed(CommandExecution)と
+// function_call_output("Process exited with code N")に入る
+test('本物の Codex CLI の rollout を読む', async () => {
+  const day = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'codex-real', 'sessions', '2026', '10', '04');
+  const a = await parseCodexFile(path.join(day, 'rollout-2026-10-04T14-26-43-01a1074f-59c4-7451-a3b7-5a9dabc7becc.jsonl'));
+  assert.equal(a.id, '01a1074f-59c4-7451-a3b7-5a9dabc7becc');
+  assert.equal(a.cwd, '/home/dev/shop');
+  assert.equal(a.project, 'shop');
+  assert.deepEqual(a.prompts, ['hello.txt を作ってコミットして', '変更なしで空のコミットを試して']);
+  assert.equal(a.assistantMessages, 2);
+  assert.deepEqual(a.models, ['gpt-5-codex']);
+  assert.deepEqual(a.toolCalls, { exec_command: 2 });
+  assert.deepEqual(a.commands, ['printf \'hello 1\\n\' > hello1.txt && git add -A && git commit -m "add hello1"', 'git commit -m "empty attempt"']);
+  // 失敗したコミットは数えない
+  assert.equal(a.commitAttempts, 2);
+  assert.equal(a.commits, 1);
+  assert.deepEqual(a.commitList, [{ hash: '2bd9b9f', branch: 'main', subject: 'add hello1', at: '2026-10-04T14:26:43.747Z' }]);
+  assert.deepEqual(a.quietCommits, []);
+  assert.equal(a.start, '2026-10-04T14:26:43.285Z');
+  assert.equal(a.end, '2026-10-04T14:28:54.470Z');
+  // 応答4回 × (入力 3000 うちキャッシュ 1000、出力 200)
+  assert.deepEqual(a.tokens, { input: 8000, output: 800, cacheRead: 4000, cacheCreation: 0 });
+  assert.deepEqual(a.usage, { '2026-10-04T14|gpt-5-codex||': [8000, 800, 4000, 0, 0, 0] });
+
+  const b = await parseCodexFile(path.join(day, 'rollout-2026-10-04T14-29-01-01a10751-7582-7000-bd3e-eaec7a67a7e6.jsonl'));
+  assert.deepEqual(b.prompts, ['もう一つファイルを足してコミットして']);
+  assert.deepEqual(b.commitList.map((c) => [c.hash, c.subject]), [['43a324b', 'add hello2']]);
+  assert.equal(b.commits, 1);
+  assert.deepEqual(b.tokens, { input: 4000, output: 400, cacheRead: 2000, cacheCreation: 0 });
 });

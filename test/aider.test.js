@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, appendFile, cp } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, appendFile, cp, utimes } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -82,4 +82,47 @@ test('WORKLOG_AIDER_DIRS が無ければ読まない', () => {
   assert.equal(defaultSourceDirs({ WORKLOG_AIDER_DIRS: '/a:/b' }, '/home/me').aider, '/a:/b');
   const store = new Store({ projectsDir: '/none', cacheDir: '/none', sourceDirs: defaultSourceDirs({}, '/home/me') });
   assert.equal(store.sourceDirs.aider, undefined);
+});
+
+// 本物の Aider v0.86.2 が書いた履歴(偽の OpenAI 互換サーバーにつないで --message で3回起動。パスだけ置き換えた)
+//   1回目: 依頼 → notes_1.txt を作って自動コミット 4aefb43
+//   2回目: 複数行の --message → notes_2.txt を作って自動コミット 3df8a3e(起動時のコマンド行の表示も複数行になる)
+//   3回目: "/ask …"(コマンドの行のあとに、中身がもう一度 "#### …" として書かれる)
+test('本物の Aider の履歴を読む', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'work-log-aider-real-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const repo = path.join(root, 'demo');
+  await cp(path.join(FIX, '..', 'aider-real', 'demo'), repo, { recursive: true });
+  // 最後の起動の終わりは履歴ファイルの更新時刻から決まるので、実際に書かれた時刻に合わせる
+  const mtime = new Date(2026, 9, 4, 14, 28, 6);
+  await utimes(path.join(repo, '.aider.chat.history.md'), mtime, mtime);
+  const entries = await listAider(root);
+  assert.equal(entries.length, 3);
+  const [a, b, c] = await Promise.all(entries.map((e) => parseAiderFile(e.file, e)));
+  const model = 'openai/gpt-4o-mini';
+
+  assert.deepEqual(a.prompts, ['メモのファイルを作って']);
+  assert.equal(a.assistantMessages, 1);
+  assert.deepEqual(a.models, [model]);
+  assert.deepEqual(a.changedFiles, ['notes_1.txt']);
+  assert.deepEqual(a.commitList, [{ hash: '4aefb43', branch: null, subject: 'feat: add notes file', at: local(2026, 10, 4, 14, 26, 20, 324) }]);
+  assert.equal(a.start, local(2026, 10, 4, 14, 26, 13));
+  assert.equal(a.end, local(2026, 10, 4, 14, 26, 20, 324));
+  assert.deepEqual(a.tokens, { input: 2600, output: 29, cacheRead: 0, cacheCreation: 0 }); // "2.6k sent, 29 received"
+
+  // 複数行の依頼は1件。コマンド行の表示の2行目('> ' が付かない)は応答として数えない
+  assert.deepEqual(b.prompts, ['2つ目のメモも追加して。\n番号は2にして。']);
+  assert.equal(b.assistantMessages, 1);
+  assert.equal(b.lastAssistantText.split('\n')[0], 'I will create notes_2.txt.');
+  assert.deepEqual(b.changedFiles, ['notes_2.txt']);
+  assert.deepEqual(b.commitList.map((x) => x.hash), ['3df8a3e']);
+  assert.equal(b.start, local(2026, 10, 4, 14, 27, 14));
+
+  // "/ask" のあとに書き直される同じ依頼は1件として数える
+  assert.deepEqual(c.prompts, ['このリポジトリには何がある？']);
+  assert.equal(c.assistantMessages, 1);
+  assert.equal(c.commits, 0);
+  assert.deepEqual(c.tokens, { input: 235, output: 29, cacheRead: 0, cacheCreation: 0 });
+  assert.equal(c.start, local(2026, 10, 4, 14, 28, 1));
+  assert.equal(c.end, mtime.toISOString());
 });
