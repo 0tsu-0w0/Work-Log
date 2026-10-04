@@ -427,7 +427,7 @@ const DEST_LABEL = new Proxy({}, { get: (_, name) => destInfo(name).label || Str
 function sendButtons() {
   const all = state.config?.destinations || [];
   const dests = all.filter((d) => d.configured).map((d) => d.name);
-  if (!dests.length) return `<p class="small">${esc(all.map((d) => d.env).join('・'))} などを設定すると、日報・週報を送れます。</p>`;
+  if (!dests.length) return `<p class="small">送り先(${esc(all.map((d) => d.label).join('・'))})の環境変数を設定すると、日報・週報を送れます(README の「送り先」を参照)。</p>`;
   return (
     dests
       .map((t) => `<div class="slack-send"><span class="small">${DEST_LABEL[t]}(${esc(state.config[t].destination)})に送る</span>
@@ -484,7 +484,7 @@ function calendarTools() {
   return `<div class="cal-export">
       <p class="small"><a href="${esc(ics)}" download>カレンダー(.ics)を書き出す</a>(この週の作業。秘匿情報は伏せます)</p>
       ${on.map((s) => `<div class="sync-send"><span class="small">${esc(s.label)}(${esc(s.destination)})</span><button data-sync="${esc(s.name)}">この週を${esc(s.label)}に記録…</button></div>`).join('')}
-      ${on.length ? '' : all.length ? `<p class="small">${esc(all.map((s) => s.env.split('・')[0]).join('・'))} などを設定すると、作業をカレンダーや工数管理サービスに記録できます。</p>` : ''}
+      ${on.length ? '' : all.length ? `<p class="small">${esc(all.map((s) => s.label).join('・'))} の環境変数を設定すると、作業をカレンダーや工数管理サービスに記録できます。</p>` : ''}
       ${syncDone ? `<p class="small">${esc(syncDone)}</p>` : ''}
     </div>`;
 }
