@@ -5,7 +5,9 @@
 //   work-log summarize [ID]  LLMで要約(IDを省略すると未要約のものをすべて)
 //   work-log report [--week] [--date YYYY-MM-DD] [--slack] [--discord] [--teams] [--google-chat] …  日報・週報を表示(送り先のオプションで送る。一覧は destinations.js)
 //   work-log ical [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--out file]  カレンダー(.ics)を書き出す(省くと過去30日、標準出力へ)
-//   work-log sync [--week] [--date YYYY-MM-DD] [--from … --to …] --gcal|--toggl|--clockify|--harvest|--redmine-time|--jira-worklog [--dry-run]
+//   work-log export --csv|--xlsx [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--per session] [--out file]
+//                            表計算ソフト向けに書き出す(省くと過去30日。CSV は標準出力へ。.xlsx は --out か、端末でない標準出力へ)
+//   work-log sync [--week] [--date YYYY-MM-DD] [--from … --to …] --gcal|--toggl|--clockify|--harvest|--caldav|--redmine-time|--jira-worklog [--dry-run]
 //                            終わったセッションをカレンダー・工数管理サービスに記録する(確認なし。一覧は sync/index.js)
 //   work-log hooks install   Claude Code の hooks に登録(uninstall / status も可)
 //   work-log hook            hooks から呼ばれる受け口(手動では使わない)
@@ -111,6 +113,27 @@ if (cmd === 'scan') {
       console.error(`${out} に書き出しました(${(r.ics.match(/^BEGIN:VEVENT/gm) || []).length}件)`);
     } else {
       process.stdout.write(r.ics);
+    }
+  } catch (err) {
+    console.error(err.message);
+    process.exit(1);
+  }
+} else if (cmd === 'export') {
+  try {
+    const format = args.includes('--xlsx') ? 'xlsx' : args.includes('--csv') ? 'csv' : null;
+    if (!format) throw new Error('形式を指定してください(--csv / --xlsx)');
+    const per = flag('per');
+    if (per !== undefined && per !== 'session' && per !== 'segment') throw new Error('--per は session(セッションごと)か segment(区間ごと。既定)です');
+    const r = store.spreadsheet({ format, from: flag('from'), to: flag('to'), tz: flag('tz') || process.env.TZ, unit: per || 'segment' });
+    const out = flag('out');
+    if (out) {
+      const { writeFile } = await import('node:fs/promises');
+      await writeFile(out, r.body);
+      console.error(`${out} に書き出しました(${r.rows}行)`);
+    } else if (format === 'xlsx' && process.stdout.isTTY) {
+      throw new Error('.xlsx は --out でファイルを指定してください');
+    } else {
+      process.stdout.write(r.body);
     }
   } catch (err) {
     console.error(err.message);

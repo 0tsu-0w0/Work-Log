@@ -478,11 +478,13 @@ let syncDone = null; // 画面の自動更新で描き直しても、記録し�
 const weekRange = () => ({ from: state.weekStart.toISOString(), to: addDays(state.weekStart, 7).toISOString() });
 
 function calendarTools() {
-  const ics = `/api/calendar.ics?${new URLSearchParams({ ...weekRange(), tz: TZ })}`;
+  const q = new URLSearchParams({ ...weekRange(), tz: TZ });
+  const ics = `/api/calendar.ics?${q}`;
   const all = state.config?.syncs || [];
   const on = all.filter((s) => s.configured);
   return `<div class="cal-export">
       <p class="small"><a href="${esc(ics)}" download>カレンダー(.ics)を書き出す</a>(この週の作業。秘匿情報は伏せます)</p>
+      <p class="small export-links">表計算ソフト向け: <a href="${esc(`/api/export.csv?${q}`)}" download>CSV</a> ・ <a href="${esc(`/api/export.xlsx?${q}`)}" download>Excel(.xlsx)</a>(作業の区間ごとの時間・コミット・コスト)</p>
       ${on.map((s) => `<div class="sync-send"><span class="small">${esc(s.label)}(${esc(s.destination)})</span><button data-sync="${esc(s.name)}">この週を${esc(s.label)}に記録…</button></div>`).join('')}
       ${on.length ? '' : all.length ? `<p class="small">${esc(all.map((s) => s.label).join('・'))} の環境変数を設定すると、作業をカレンダーや工数管理サービスに記録できます。</p>` : ''}
       ${syncDone ? `<p class="small">${esc(syncDone)}</p>` : ''}

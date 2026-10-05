@@ -22,6 +22,8 @@ import { createHash } from 'node:crypto';
 import { Syncs } from './sync/index.js';
 import { resolveRange } from './sync/entries.js';
 import { buildCalendar } from './ical.js';
+import { exportRows, toCsv, toXlsx } from './export.js';
+import { buildMetrics } from './metrics.js';
 
 // Git の情報は外部(手作業のコミットなど)でも変わるので、短時間だけ使い回す
 const GIT_CACHE_MS = 60 * 1000;
@@ -104,6 +106,7 @@ export class Store {
     this.trackers.setConfig(json.tasks || {});
     for (const d of DESTINATIONS) this.destinations[d.name].setConfig(json[d.name] || {});
     this.syncs.setConfig(json);
+    this.metricsEnabled = json?.metrics?.enabled === true; // /metrics(Prometheus 形式)を出すか。環境変数 WORKLOG_METRICS=1 でもよい
   }
 
   // 利用者の単価表(任意)。読めなければ組み込みの単価だけを使う
@@ -447,6 +450,23 @@ export class Store {
   calendar({ from, to, tz, now = Date.now() } = {}) {
     const range = resolveRange({ from, to }, { timeZone: validTimeZone(tz), defaultDays: 30, maxDays: 366, now });
     return { ...range, ics: buildCalendar(this.sessions(now), { ...range, now }) };
+  }
+
+  // 表計算ソフト向けの書き出し。format: "csv" | "xlsx" / unit: "segment"(区間ごと。既定)| "session"(セッションごと)
+  // from / to は "YYYY-MM-DD" か ISO 8601(省くと過去30日、最大366日)。文字列は伏せてから書き出す
+  spreadsheet({ format = 'csv', from, to, tz, unit = 'segment', now = Date.now() } = {}) {
+    if (!['csv', 'xlsx'].includes(format)) throw new Error(`形式は csv か xlsx です: ${String(format).slice(0, 20)}`);
+    if (!['segment', 'session'].includes(unit)) throw new Error(`unit は segment(区間ごと)か session(セッションごと)です: ${String(unit).slice(0, 20)}`);
+    const timeZone = validTimeZone(tz);
+    const range = resolveRange({ from, to }, { timeZone, defaultDays: 30, maxDays: 366, now });
+    const rows = exportRows(this.sessions(now), { ...range, unit, subagents: this.subagentIndex() });
+    const body = format === 'csv' ? toCsv(rows, { timeZone }) : toXlsx(rows, { timeZone, now });
+    return { ...range, timeZone, rows: rows.length, body };
+  }
+
+  // Prometheus のテキスト形式の指標(手元に残っているログ全体の累計)
+  metrics(now = Date.now()) {
+    return buildMetrics({ sessions: this.sessions(now), costs: this.costs() });
   }
 
   // カレンダー・工数管理サービスへの記録の下見。終わったセッションだけが対象。params: { from, to, tz }(省くと過去7日)

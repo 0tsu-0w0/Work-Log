@@ -60,36 +60,40 @@ export class SyncClient {
     return { configured, destination: configured ? this.destination() : null, missing: configured ? [] : this.missing(), ...this.options() };
   }
 
-  // JSON の API を呼ぶ。404 / 410 は err.status で見分けられるようにする
-  async request(method, url, { headers = {}, body, form } = {}) {
+  // 応答をそのまま返す(JSON 以外の API 用。CalDAV など)。429 だけはここでエラーにする
+  async send(method, url, { headers = {}, body } = {}) {
     const wait = this.lastAt + this.minIntervalMs - Date.now();
     if (wait > 0) await sleep(wait);
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), TIMEOUT_MS);
     let res;
     try {
-      res = await this.fetch(url, {
-        method,
-        headers: { accept: 'application/json', ...(body !== undefined ? { 'content-type': 'application/json' } : {}), ...(form ? { 'content-type': 'application/x-www-form-urlencoded' } : {}), ...headers },
-        body: form ? new URLSearchParams(form).toString() : body !== undefined ? JSON.stringify(body) : undefined,
-        redirect: 'error',
-        signal: ac.signal,
-      });
+      res = await this.fetch(url, { method, headers, body, redirect: 'error', signal: ac.signal });
     } catch (err) {
       throw new Error(`${this.label} に接続できません: ${err.name === 'AbortError' ? '応答がありません(10秒)' : err.message}`);
     } finally {
       clearTimeout(timer);
       this.lastAt = Date.now();
     }
+    if (res.status === 429) {
+      await res.body?.cancel().catch(() => {});
+      throw Object.assign(new Error(`${this.label} の API の利用制限に達しました(${res.headers.get('retry-after') || '少し'}秒後に再試行してください)`), { status: 429, retryAfter: res.headers.get('retry-after') });
+    }
+    return res;
+  }
+
+  // JSON の API を呼ぶ。404 / 410 は err.status で見分けられるようにする
+  async request(method, url, { headers = {}, body, form } = {}) {
+    const res = await this.send(method, url, {
+      headers: { accept: 'application/json', ...(body !== undefined ? { 'content-type': 'application/json' } : {}), ...(form ? { 'content-type': 'application/x-www-form-urlencoded' } : {}), ...headers },
+      body: form ? new URLSearchParams(form).toString() : body !== undefined ? JSON.stringify(body) : undefined,
+    });
     const text = await res.text().catch(() => '');
     let json = null;
     try {
       json = text ? JSON.parse(text) : null;
     } catch {
       // JSON でない応答(Toggl はエラーを文字列で返すことがある)
-    }
-    if (res.status === 429) {
-      throw Object.assign(new Error(`${this.label} の API の利用制限に達しました(${res.headers.get('retry-after') || '少し'}秒後に再試行してください)`), { status: 429, retryAfter: res.headers.get('retry-after') });
     }
     if (!res.ok) {
       // Redmine は { errors: ["…"] }、Jira は { errorMessages: […], errors: { 項目: "…" } } で理由を返す

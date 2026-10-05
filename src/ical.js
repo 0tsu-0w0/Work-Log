@@ -43,32 +43,38 @@ export function icsDate(v) {
   return new Date(v).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
 }
 
+// 予定のキー(sync/entries.js)から UID を作る。.ics の書き出しと CalDAV への記録で同じものを使う
+export const eventUid = (key) => `${key}@work-log`;
+
+// 予定1件(buildEntries の形)の VEVENT の行(折り返し前)
+export function eventLines(e, { now = Date.now() } = {}) {
+  const start = Date.parse(e.start);
+  const end = Math.max(Date.parse(e.end), start + 60000);
+  return [
+    'BEGIN:VEVENT',
+    `UID:${eventUid(e.key)}`,
+    `DTSTAMP:${icsDate(now)}`,
+    `DTSTART:${icsDate(start)}`,
+    `DTEND:${icsDate(end)}`,
+    `SUMMARY:${escapeText(e.title)}`,
+    `DESCRIPTION:${escapeText(e.description)}`,
+    ...(e.project ? [`CATEGORIES:${escapeText(e.project)}`] : []),
+    'END:VEVENT',
+  ];
+}
+
+const HEAD = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Work Log//Work Log//JA', 'CALSCALE:GREGORIAN'];
+const finish = (lines) => lines.map(foldLine).join(CRLF) + CRLF;
+
+// CalDAV に置く予定1件分の iCalendar。CalDAV のカレンダーに置くものには METHOD を書いてはいけない(RFC 4791 4.1)
+export function buildEvent(e, { now = Date.now() } = {}) {
+  return finish([...HEAD, ...eventLines(e, { now }), 'END:VCALENDAR']);
+}
+
 // sessions は store.sessions() の形。from / to(ミリ秒)に区間の開始が入るものを書き出す。文字列は buildEntries で伏せてある
 export function buildCalendar(sessions, { from, to, now = Date.now(), name = 'Work Log' } = {}) {
-  const lines = [
-    'BEGIN:VCALENDAR',
-    'VERSION:2.0',
-    'PRODID:-//Work Log//Work Log//JA',
-    'CALSCALE:GREGORIAN',
-    'METHOD:PUBLISH',
-    `X-WR-CALNAME:${escapeText(name)}`,
-  ];
-  const stamp = icsDate(now);
-  for (const e of buildEntries(sessions, { from, to })) {
-    const start = Date.parse(e.start);
-    const end = Math.max(Date.parse(e.end), start + 60000);
-    lines.push(
-      'BEGIN:VEVENT',
-      `UID:${e.key}@work-log`,
-      `DTSTAMP:${stamp}`,
-      `DTSTART:${icsDate(start)}`,
-      `DTEND:${icsDate(end)}`,
-      `SUMMARY:${escapeText(e.title)}`,
-      `DESCRIPTION:${escapeText(e.description)}`,
-      ...(e.project ? [`CATEGORIES:${escapeText(e.project)}`] : []),
-      'END:VEVENT',
-    );
-  }
+  const lines = [...HEAD, 'METHOD:PUBLISH', `X-WR-CALNAME:${escapeText(name)}`];
+  for (const e of buildEntries(sessions, { from, to })) lines.push(...eventLines(e, { now }));
   lines.push('END:VCALENDAR');
-  return lines.map(foldLine).join(CRLF) + CRLF;
+  return finish(lines);
 }

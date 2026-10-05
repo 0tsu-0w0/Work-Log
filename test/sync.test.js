@@ -12,21 +12,24 @@ import { Clockify } from '../src/sync/clockify.js';
 import { Harvest } from '../src/sync/harvest.js';
 import { RedmineTime } from '../src/sync/redmine.js';
 import { JiraWorklog, jiraTime } from '../src/sync/jira.js';
+import { CalDav } from '../src/sync/caldav.js';
 
 const API = 'http://fake.test';
 const SECRETS = {
   GOOGLE_CLIENT_ID: 'cid.apps.example', GOOGLE_CLIENT_SECRET: 'GSECRET-xyz', GOOGLE_REFRESH_TOKEN: 'GREFRESH-xyz', GOOGLE_CALENDAR_ID: 'worklog-cal',
   TOGGL_API_TOKEN: 'TOGGLTOKEN123', CLOCKIFY_API_KEY: 'CLOCKIFYKEY123', HARVEST_ACCESS_TOKEN: 'HARVESTTOKEN123', HARVEST_ACCOUNT_ID: '4242',
   REDMINE_API_KEY: 'REDMINEKEY123', JIRA_EMAIL: 'me@example.com', JIRA_API_TOKEN: 'JIRATOKEN123',
+  CALDAV_USERNAME: 'caldav-user-x', CALDAV_PASSWORD: 'CALDAVPASS123',
 };
 const ENV = {
   ...SECRETS,
   WORKLOG_GCAL_API: `${API}/gcal`, WORKLOG_GCAL_TOKEN_URL: `${API}/token`,
   WORKLOG_TOGGL_API: `${API}/toggl`, WORKLOG_CLOCKIFY_API: `${API}/clockify`, WORKLOG_HARVEST_API: `${API}/harvest`,
   WORKLOG_REDMINE_API: `${API}/redmine`, WORKLOG_JIRA_API: `${API}/jira`,
+  CALDAV_URL: 'http://localhost/caldav/cal/',
 };
 
-// 各サービスの API を真似る。作られた記録を覚え、無い ID の更新・削除には 404 を返す
+// 各サービスの API を真似る。作られた記録を覚え、無い ID の更新・削除には 404 を返す(CalDAV は ETag と条件付きの要求も真似る)
 function fakeApi() {
   const calls = [];
   const items = new Map();
@@ -37,12 +40,26 @@ function fakeApi() {
     const u = new URL(url);
     const method = o.method || 'GET';
     const ct = o.headers?.['content-type'] || '';
-    const body = o.body ? (ct.includes('json') ? JSON.parse(o.body) : Object.fromEntries(new URLSearchParams(o.body))) : undefined;
+    const body = o.body ? (ct.includes('json') ? JSON.parse(o.body) : ct.includes('calendar') ? o.body : Object.fromEntries(new URLSearchParams(o.body))) : undefined;
     calls.push({ url: u.href, path: u.pathname, method, headers: o.headers, body, redirect: o.redirect });
     if (fail) {
       const f = fail;
       fail = null;
       return json(f.status, { message: 'too many' }, f.headers);
+    }
+    if (u.pathname.startsWith('/caldav/')) {
+      const cur = items.get(u.pathname);
+      const h = o.headers || {};
+      if (method === 'GET') return new Response(cur ? cur.body : null, { status: cur ? 200 : 404, headers: cur ? { etag: cur.etag } : {} });
+      if ((h['if-none-match'] === '*' && cur) || (h['if-match'] && h['if-match'] !== cur?.etag)) return new Response(null, { status: 412 });
+      if (method === 'DELETE') {
+        if (!cur) return new Response(null, { status: 404 });
+        items.delete(u.pathname);
+        return new Response(null, { status: 204 });
+      }
+      const etag = `"e${++n}"`;
+      items.set(u.pathname, { body, etag });
+      return new Response(null, { status: cur ? 204 : 201, headers: { etag } });
     }
     if (u.pathname === '/token') return json(200, { access_token: `AT${calls.length}`, expires_in: 3599, token_type: 'Bearer' });
     if (u.pathname === '/toggl/me') return json(200, { id: 1, default_workspace_id: 777 });
@@ -72,7 +89,7 @@ function fakeApi() {
 
 function clients(fetchImpl, env = ENV) {
   const o = { env, fetchImpl, minIntervalMs: 0 };
-  return { gcal: new GoogleCalendar(o), toggl: new Toggl(o), clockify: new Clockify(o), harvest: new Harvest(o), redmine: new RedmineTime(o), jira: new JiraWorklog(o) };
+  return { gcal: new GoogleCalendar(o), toggl: new Toggl(o), clockify: new Clockify(o), harvest: new Harvest(o), caldav: new CalDav(o), redmine: new RedmineTime(o), jira: new JiraWorklog(o) };
 }
 
 const line = (id, o) => JSON.stringify({ sessionId: id, cwd: '/nonexistent/web', ...o });
@@ -109,7 +126,7 @@ async function setup(t, { config = CONFIG } = {}) {
 
 const titleOf = {
   gcal: (b) => b.summary, toggl: (b) => b.description, clockify: (b) => b.description, harvest: (b) => b.notes,
-  redmine: (b) => b.time_entry.comments, jira: (b) => b.comment.content[0].content[0].text,
+  caldav: (b) => b.match(/^SUMMARY:(.*)\r$/m)[1], redmine: (b) => b.time_entry.comments, jira: (b) => b.comment.content[0].content[0].text,
 };
 
 for (const { name } of SYNCS) {
@@ -306,7 +323,7 @@ test('API: 下見と記録、/api/config に秘密は含めない', async (t) =>
   const cfgText = await (await fetch(`${base}/api/config`)).text();
   for (const v of Object.values(SECRETS).filter((v) => v !== 'worklog-cal' && v !== '4242')) assert.equal(cfgText.includes(v), false, v);
   const cfg = JSON.parse(cfgText);
-  assert.deepEqual(cfg.syncs.map((s) => [s.name, s.configured]), [['gcal', true], ['toggl', true], ['clockify', true], ['harvest', true], ['redmine', true], ['jira', true]]);
+  assert.deepEqual(cfg.syncs.map((s) => [s.name, s.configured]), [['gcal', true], ['toggl', true], ['clockify', true], ['harvest', true], ['caldav', true], ['redmine', true], ['jira', true]]);
   assert.equal(cfg.syncs[1].label, 'Toggl Track');
   assert.equal(cfg.syncs[1].minMinutes, 1);
 
