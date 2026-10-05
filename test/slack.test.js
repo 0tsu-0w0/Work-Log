@@ -47,7 +47,7 @@ test('Slack の mrkdwn: 記号を逃がし、リンクを付け、コストは�
   assert.match(m.preview, /• <https:\/\/x\.atlassian\.net\/browse\/WEB-1\|WEB-1> A&amp;B\(進行中\)  30分/);
   assert.match(m.preview, /05:00 API を直す — api・1時間・1コミット\(Codex\)/);
   assert.doesNotMatch(m.preview, /\$/);
-  assert.match(toSlack(r, { includeCost: true }).preview, /API 換算 \$1\.50/);
+  assert.match(toSlack(r, { includeCost: true }).preview, /API換算 \$1\.50\(参考値\)/);
   assert.equal(m.blocks.at(-1).type, 'context');
   assert.match(m.text, /^Work Log 日報 .*: 作業 1時間30分/);
   assert.equal(plainFromMrkdwn('*見出し* <https://a|名前> &lt;x&gt; &amp;'), '見出し 名前 (https://a) <x> &');
@@ -108,7 +108,7 @@ test('送り方: Incoming Webhook と Bot トークン(リンク付き)', async 
 
 test('セッション終了の通知文', () => {
   const m = sessionEndMessage({ displayTitle: 'A<B', project: 'web', activeMs: 25 * 60000, commits: 2, tool: 'codex', cost: { usd: 1.234 }, tasks: [{ label: 'WEB-1', url: 'https://x/WEB-1' }] }, { includeCost: true });
-  assert.equal(m.blocks[0].text.text, 'セッション終了: *A&lt;B*\nweb・25分・2コミット・Codex・API 換算 $1.23\nタスク: <https://x/WEB-1|WEB-1>');
+  assert.equal(m.blocks[0].text.text, 'セッション終了: *A&lt;B*\nweb・25分・2コミット・Codex・API換算 $1.23(参考値)\nタスク: <https://x/WEB-1|WEB-1>');
 });
 
 async function setupStore(t, slackEnv, config) {

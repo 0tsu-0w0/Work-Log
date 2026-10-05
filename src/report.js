@@ -113,7 +113,7 @@ export function toSlack(report, { includeCost = false, maxSessions = 20 } = {}) 
   const time = (iso) => new Intl.DateTimeFormat('ja-JP', { timeZone: range.timeZone, ...(range.period === 'week' ? { month: 'numeric', day: 'numeric' } : {}), hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
   const head = `*Work Log ${title(range)}*`;
   const summary = report.sessions.length
-    ? `作業 ${dur(totals.activeMs)}・${totals.sessions}セッション・${totals.commits}コミット${includeCost && totals.usd != null ? `・API 換算 $${totals.usd.toFixed(2)}` : ''}`
+    ? `作業 ${dur(totals.activeMs)}・${totals.sessions}セッション・${totals.commits}コミット${includeCost && totals.usd != null ? `・API換算 $${totals.usd.toFixed(2)}(参考値)` : ''}`
     : 'この期間の作業はありません。';
   const sections = [`${head}\n${summary}`];
   if (report.projects.length) sections.push(['*プロジェクト別*', ...report.projects.map((p) => `• ${esc(p.project)}  ${dur(p.activeMs)}(${p.sessions}セッション・${p.commits}コミット)`)].join('\n'));
@@ -156,7 +156,7 @@ export function plainFromMrkdwn(text) {
 export function sessionEndMessage(s, { includeCost = false } = {}) {
   const parts = [esc(s.project), dur(s.activeMs), `${s.commits}コミット`];
   if (s.tool && s.tool !== 'claude') parts.push(toolLabel(s.tool));
-  if (includeCost && s.cost) parts.push(`API 換算 $${s.cost.usd.toFixed(2)}`);
+  if (includeCost && s.cost) parts.push(`API換算 $${s.cost.usd.toFixed(2)}(参考値)`);
   const tasks = (s.tasks || []).map((t) => (t.url ? `<${t.url.replace(/[<>|]/g, encodeURIComponent)}|${esc(t.label)}>` : esc(t.label)));
   const text = `セッション終了: *${esc(s.displayTitle || s.title)}*\n${parts.join('・')}${tasks.length ? `\nタスク: ${tasks.join(', ')}` : ''}`;
   return { text: `セッション終了: ${s.displayTitle || s.title}`, blocks: [{ type: 'section', text: { type: 'mrkdwn', text } }] };
@@ -174,7 +174,7 @@ export function toDiscord(report, { includeCost = false, maxSessions = 20 } = {}
   const { totals, range } = report;
   const time = (iso) => new Intl.DateTimeFormat('ja-JP', { timeZone: range.timeZone, ...(range.period === 'week' ? { month: 'numeric', day: 'numeric' } : {}), hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
   const summary = report.sessions.length
-    ? `作業 ${dur(totals.activeMs)}・${totals.sessions}セッション・${totals.commits}コミット${includeCost && totals.usd != null ? `・API 換算 $${totals.usd.toFixed(2)}` : ''}`
+    ? `作業 ${dur(totals.activeMs)}・${totals.sessions}セッション・${totals.commits}コミット${includeCost && totals.usd != null ? `・API換算 $${totals.usd.toFixed(2)}(参考値)` : ''}`
     : 'この期間の作業はありません。';
   const sections = [];
   if (report.projects.length) sections.push(['プロジェクト別', report.projects.map((p) => `• ${dEsc(p.project)}  ${dur(p.activeMs)}(${p.sessions}セッション・${p.commits}コミット)`)]);
@@ -212,7 +212,7 @@ export function toDiscord(report, { includeCost = false, maxSessions = 20 } = {}
 export function sessionEndDiscord(s, { includeCost = false } = {}) {
   const parts = [dEsc(s.project), dur(s.activeMs), `${s.commits}コミット`];
   if (s.tool && s.tool !== 'claude') parts.push(toolLabel(s.tool));
-  if (includeCost && s.cost) parts.push(`API 換算 $${s.cost.usd.toFixed(2)}`);
+  if (includeCost && s.cost) parts.push(`API換算 $${s.cost.usd.toFixed(2)}(参考値)`);
   const tasks = (s.tasks || []).map((t) => dLink(t.label, t.url));
   const description = `${parts.join('・')}${tasks.length ? `\nタスク: ${tasks.join(', ')}` : ''}`;
   return { content: '', embeds: [{ title: `セッション終了: ${s.displayTitle || s.title}`.slice(0, LIMITS.title), description, color: DISCORD_COLOR }] };
@@ -252,7 +252,7 @@ export function toTeams(report, { includeCost = false, maxSessions = 20 } = {}) 
   const { totals, range } = report;
   const time = (iso) => new Intl.DateTimeFormat('ja-JP', { timeZone: range.timeZone, ...(range.period === 'week' ? { month: 'numeric', day: 'numeric' } : {}), hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
   const summary = report.sessions.length
-    ? `作業 ${dur(totals.activeMs)}・${totals.sessions}セッション・${totals.commits}コミット${includeCost && totals.usd != null ? `・API 換算 $${totals.usd.toFixed(2)}` : ''}`
+    ? `作業 ${dur(totals.activeMs)}・${totals.sessions}セッション・${totals.commits}コミット${includeCost && totals.usd != null ? `・API換算 $${totals.usd.toFixed(2)}(参考値)` : ''}`
     : 'この期間の作業はありません。';
   const sections = [];
   if (report.projects.length) sections.push(['プロジェクト別', report.projects.map((p) => `${tEsc(p.project)}  ${dur(p.activeMs)}(${p.sessions}セッション・${p.commits}コミット)`)]);
@@ -279,7 +279,7 @@ export function toTeams(report, { includeCost = false, maxSessions = 20 } = {}) 
 export function sessionEndTeams(s, { includeCost = false } = {}) {
   const parts = [tEsc(s.project), dur(s.activeMs), `${s.commits}コミット`];
   if (s.tool && s.tool !== 'claude') parts.push(toolLabel(s.tool));
-  if (includeCost && s.cost) parts.push(`API 換算 $${s.cost.usd.toFixed(2)}`);
+  if (includeCost && s.cost) parts.push(`API換算 $${s.cost.usd.toFixed(2)}(参考値)`);
   const tasks = (s.tasks || []).map((t) => tLink(t.label, t.url));
   const body = [tb(`セッション終了: ${tEsc(s.displayTitle || s.title)}`, { weight: 'Bolder' }), tb(parts.join('・'), { spacing: 'Small' })];
   if (tasks.length) body.push(tb(`タスク: ${tasks.join(', ')}`, { spacing: 'Small' }));
@@ -304,7 +304,7 @@ export function toGoogleChat(report, { includeCost = false, maxSessions = 20 } =
   const { totals, range } = report;
   const time = (iso) => new Intl.DateTimeFormat('ja-JP', { timeZone: range.timeZone, ...(range.period === 'week' ? { month: 'numeric', day: 'numeric' } : {}), hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
   const summary = report.sessions.length
-    ? `作業 ${dur(totals.activeMs)}・${totals.sessions}セッション・${totals.commits}コミット${includeCost && totals.usd != null ? `・API 換算 $${totals.usd.toFixed(2)}` : ''}`
+    ? `作業 ${dur(totals.activeMs)}・${totals.sessions}セッション・${totals.commits}コミット${includeCost && totals.usd != null ? `・API換算 $${totals.usd.toFixed(2)}(参考値)` : ''}`
     : 'この期間の作業はありません。';
   const head = [`*Work Log ${title(range)}*\n${summary}`];
   if (report.projects.length) head.push(['*プロジェクト別*', ...report.projects.map((p) => `• ${gEsc(p.project)}  ${dur(p.activeMs)}(${p.sessions}セッション・${p.commits}コミット)`)].join('\n'));
@@ -325,7 +325,7 @@ export function toGoogleChat(report, { includeCost = false, maxSessions = 20 } =
 export function sessionEndGoogleChat(s, { includeCost = false } = {}) {
   const parts = [gEsc(s.project), dur(s.activeMs), `${s.commits}コミット`];
   if (s.tool && s.tool !== 'claude') parts.push(toolLabel(s.tool));
-  if (includeCost && s.cost) parts.push(`API 換算 $${s.cost.usd.toFixed(2)}`);
+  if (includeCost && s.cost) parts.push(`API換算 $${s.cost.usd.toFixed(2)}(参考値)`);
   const tasks = (s.tasks || []).map((t) => gLink(t.label, t.url));
   return { text: [`*セッション終了: ${gEsc(s.displayTitle || s.title)}*`, parts.join('・'), ...(tasks.length ? [`タスク: ${tasks.join(', ')}`] : [])].join('\n') };
 }
@@ -341,7 +341,7 @@ function reportParts(report, { includeCost = false, maxSessions = 20 } = {}, { e
   const { totals, range } = report;
   const time = (iso) => new Intl.DateTimeFormat('ja-JP', { timeZone: range.timeZone, ...(range.period === 'week' ? { month: 'numeric', day: 'numeric' } : {}), hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
   const summary = report.sessions.length
-    ? `作業 ${dur(totals.activeMs)}・${totals.sessions}セッション・${totals.commits}コミット${includeCost && totals.usd != null ? `・API 換算 $${totals.usd.toFixed(2)}` : ''}`
+    ? `作業 ${dur(totals.activeMs)}・${totals.sessions}セッション・${totals.commits}コミット${includeCost && totals.usd != null ? `・API換算 $${totals.usd.toFixed(2)}(参考値)` : ''}`
     : 'この期間の作業はありません。';
   const sections = [];
   if (report.projects.length) sections.push(['プロジェクト別', report.projects.map((p) => `${e(p.project)}  ${dur(p.activeMs)}(${p.sessions}セッション・${p.commits}コミット)`)]);
@@ -396,7 +396,7 @@ export function toChatwork(report, { includeCost = false, maxSessions = 20 } = {
 export function sessionEndChatwork(s, { includeCost = false } = {}) {
   const parts = [cwEsc(s.project), dur(s.activeMs), `${s.commits}コミット`];
   if (s.tool && s.tool !== 'claude') parts.push(toolLabel(s.tool));
-  if (includeCost && s.cost) parts.push(`API 換算 $${s.cost.usd.toFixed(2)}`);
+  if (includeCost && s.cost) parts.push(`API換算 $${s.cost.usd.toFixed(2)}(参考値)`);
   const tasks = (s.tasks || []).map((t) => cwLink(t.label, t.url));
   return { body: `[info][title]セッション終了: ${cwEsc(s.displayTitle || s.title)}[/title]${parts.join('・')}${tasks.length ? `\nタスク: ${tasks.join(', ')}` : ''}[/info]` };
 }
@@ -426,7 +426,7 @@ export function toMattermost(report, { includeCost = false, maxSessions = 20 } =
 export function sessionEndMattermost(s, { includeCost = false } = {}) {
   const parts = [mmEsc(s.project), dur(s.activeMs), `${s.commits}コミット`];
   if (s.tool && s.tool !== 'claude') parts.push(toolLabel(s.tool));
-  if (includeCost && s.cost) parts.push(`API 換算 $${s.cost.usd.toFixed(2)}`);
+  if (includeCost && s.cost) parts.push(`API換算 $${s.cost.usd.toFixed(2)}(参考値)`);
   const tasks = (s.tasks || []).map((t) => mmLink(t.label, t.url));
   return { text: [`**セッション終了: ${mmEsc(s.displayTitle || s.title)}**`, parts.join('・'), ...(tasks.length ? [`タスク: ${tasks.join(', ')}`] : [])].join('\n') };
 }
@@ -456,7 +456,7 @@ export function toRocketChat(report, { includeCost = false, maxSessions = 20 } =
 export function sessionEndRocketChat(s, { includeCost = false } = {}) {
   const parts = [rcEsc(s.project), dur(s.activeMs), `${s.commits}コミット`];
   if (s.tool && s.tool !== 'claude') parts.push(toolLabel(s.tool));
-  if (includeCost && s.cost) parts.push(`API 換算 $${s.cost.usd.toFixed(2)}`);
+  if (includeCost && s.cost) parts.push(`API換算 $${s.cost.usd.toFixed(2)}(参考値)`);
   const tasks = (s.tasks || []).map((t) => rcLink(t.label, t.url));
   return { text: [`*セッション終了: ${rcEsc(s.displayTitle || s.title)}*`, parts.join('・'), ...(tasks.length ? [`タスク: ${tasks.join(', ')}`] : [])].join('\n') };
 }
@@ -503,7 +503,7 @@ export function toLineWorks(report, { includeCost = false, maxSessions = 20 } = 
 export function sessionEndLineWorks(s, { includeCost = false } = {}) {
   const parts = [plainEsc(s.project), dur(s.activeMs), `${s.commits}コミット`];
   if (s.tool && s.tool !== 'claude') parts.push(toolLabel(s.tool));
-  if (includeCost && s.cost) parts.push(`API 換算 $${s.cost.usd.toFixed(2)}`);
+  if (includeCost && s.cost) parts.push(`API換算 $${s.cost.usd.toFixed(2)}(参考値)`);
   const tasks = (s.tasks || []).map((t) => plainLink(t.label, t.url));
   const text = [`セッション終了: ${plainEsc(s.displayTitle || s.title)}`, parts.join('・'), ...(tasks.length ? [`タスク: ${tasks.join(', ')}`] : [])].join('\n');
   return { messages: [[...text].slice(0, LW_MAX).join('')] };
@@ -591,7 +591,7 @@ export function toEmail(report, { includeCost = false, maxSessions = 100 } = {})
 export function sessionEndEmail(s, { includeCost = false } = {}) {
   const parts = [plainEsc(s.project), dur(s.activeMs), `${s.commits}コミット`];
   if (s.tool && s.tool !== 'claude') parts.push(toolLabel(s.tool));
-  if (includeCost && s.cost) parts.push(`API 換算 $${s.cost.usd.toFixed(2)}`);
+  if (includeCost && s.cost) parts.push(`API換算 $${s.cost.usd.toFixed(2)}(参考値)`);
   const name = plainEsc(s.displayTitle || s.title);
   const tasks = s.tasks || [];
   const text = [`セッション終了: ${name}`, parts.join('・'), ...(tasks.length ? [`タスク: ${tasks.map((x) => plainLink(x.label, x.url)).join(', ')}`] : []), '', '-- ', FOOTER].join('\n');
@@ -639,7 +639,7 @@ export function toMatrix(report, { includeCost = false, maxSessions = 20 } = {})
 export function sessionEndMatrix(s, { includeCost = false } = {}) {
   const parts = [s.project, dur(s.activeMs), `${s.commits}コミット`];
   if (s.tool && s.tool !== 'claude') parts.push(toolLabel(s.tool));
-  if (includeCost && s.cost) parts.push(`API 換算 $${s.cost.usd.toFixed(2)}`);
+  if (includeCost && s.cost) parts.push(`API換算 $${s.cost.usd.toFixed(2)}(参考値)`);
   const tasks = s.tasks || [];
   const name = s.displayTitle || s.title;
   return {

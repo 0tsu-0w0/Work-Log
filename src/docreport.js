@@ -64,7 +64,7 @@ function model(report, { includeCost, maxSessions }) {
   const shown = report.sessions.slice(0, maxSessions);
   return {
     summary: report.sessions.length
-      ? `作業 ${dur(totals.activeMs)}・${totals.sessions}セッション・${totals.commits}コミット${includeCost && totals.usd != null ? `・API 換算 $${totals.usd.toFixed(2)}` : ''}`
+      ? `作業 ${dur(totals.activeMs)}・${totals.sessions}セッション・${totals.commits}コミット${includeCost && totals.usd != null ? `・API換算 $${totals.usd.toFixed(2)}(参考値)` : ''}`
       : 'この期間の作業はありません。',
     projects: report.projects.map((p) => ({ name: p.project, time: dur(p.activeMs), sessions: p.sessions, commits: p.commits })),
     tasks: report.tasks.map((t) => ({ label: t.label, url: t.url, issue: t.issue ? `${t.issue.title}(${t.issue.stateLabel})` : '', time: dur(t.activeMs) })),
@@ -140,7 +140,7 @@ export function sessionEndObsidian(s, { includeCost = false, timeZone } = {}) {
   const hm = new Intl.DateTimeFormat('ja-JP', { timeZone: tz, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(at);
   const parts = [mdEsc(s.project), dur(s.activeMs), `${s.commits}コミット`];
   if (s.tool && s.tool !== 'claude') parts.push(mdEsc(toolLabel(s.tool)));
-  if (includeCost && s.cost) parts.push(`API 換算 $${s.cost.usd.toFixed(2)}`);
+  if (includeCost && s.cost) parts.push(`API換算 $${s.cost.usd.toFixed(2)}(参考値)`);
   const tasks = (s.tasks || []).map((t) => mdLink(t.label, t.url));
   return { kind: 'session', date, line: `- ${hm} ${mdEsc(s.displayTitle || s.title)} — ${parts.join('・')}${tasks.length ? `・タスク: ${tasks.join(', ')}` : ''}` };
 }

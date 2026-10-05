@@ -49,7 +49,7 @@ test('Markdown: 書式・メンション・チャンネル参照になる記号�
     range,
   });
   const m = toRocketChat(r, { includeCost: true });
-  assert.ok(m.text.startsWith('*Work Log 日報 2026/10/4(日)*\n作業 20分・1セッション・0コミット・API 換算 $2.00\n\n*プロジェクト別*\n• web  20分'), m.text);
+  assert.ok(m.text.startsWith('*Work Log 日報 2026/10/4(日)*\n作業 20分・1セッション・0コミット・API換算 $2.00(参考値)\n\n*プロジェクト別*\n• web  20分'), m.text);
   assert.ok(m.text.includes('＠all ＠here ＠taro ＃general ＊太字＊ ＿x＿ ～y～ ｀z｀ ［a］(b) ＜b＞'), m.text);
   assert.doesNotMatch(m.text, /@|#/);
   assert.ok(m.text.includes('• [WEB-1](https://x.example/browse/WEB-1?a=%28b%29) A＿B(Done)  20分'), m.text);

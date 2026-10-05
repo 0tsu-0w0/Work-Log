@@ -75,7 +75,7 @@ function chartSvg(rows, width, present) {
     // 当たり判定は棒より広く、列全体にとる
     bars += `<rect x="${pad.l + band * i}" y="${pad.t}" width="${band}" height="${plotH}" class="hit" data-i="${i}"/>`;
   });
-  return `<svg width="${width}" height="${H}" role="img" aria-label="日別の API 換算コスト">${grid}${bars}</svg>`;
+  return `<svg width="${width}" height="${H}" role="img" aria-label="日別の API換算(参考値・請求額ではありません)">${grid}${bars}</svg>`;
 }
 
 function tooltipHtml(row, present) {
@@ -102,7 +102,7 @@ function groupTable(buckets, keyOf, label) {
   const rows = [...g.values()].sort((a, b) => b.usd - a.usd);
   const total = sum(rows.map((r) => r.usd)) || 1;
   return `<table class="cost-table">
-    <thead><tr><th>${label}</th><th class="n">コスト</th><th class="n">割合</th><th class="n">入力</th><th class="n">出力</th><th class="n">キャッシュ読込</th><th class="n">キャッシュ書込</th></tr></thead>
+    <thead><tr><th>${label}</th><th class="n" title="参考値・請求額ではありません">API換算</th><th class="n">割合</th><th class="n">入力</th><th class="n">出力</th><th class="n">キャッシュ読込</th><th class="n">キャッシュ書込</th></tr></thead>
     <tbody>${rows.map((r) => `<tr>
       <td>${label === 'モデル' ? `<span class="sw" style="background:var(${FAMILY_VAR[r.family] || '--series-other'})"></span>` : ''}${esc(r.key)}</td>
       <td class="n">${r.priced ? usd(r.usd) : '<span class="small" title="単価表にないモデルです">単価不明</span>'}</td>
@@ -124,13 +124,13 @@ export function renderCosts(root, data, { days, onSession }) {
 
   root.innerHTML = `
     <div class="cost-head">
-      <p class="small">API で使った場合の換算額です(Pro/Max などの定額プランの請求額ではありません)。単価は ${esc(pricing.asOf)} 時点の
+      <p class="small"><b>API換算（参考値・請求額ではありません）</b>: 同じ量を API の従量課金で使った場合の目安です。Pro/Max などの定額プランでは、この金額で請求されることはありません。単価は ${esc(pricing.asOf)} 時点の
         <a href="${esc(pricing.source)}" target="_blank" rel="noopener noreferrer">公式価格</a>。サブエージェントを含みます。
         ${estimated ? '一部の出力トークンはログに確定値がないため、本文の長さから見積もっています。' : ''}
         ${unknownModels.length ? `単価不明のモデル(${unknownModels.map(esc).join(', ')})は合計に含みません。<code>~/.work-log/pricing.json</code> に単価を書くと計算します(README の「コスト」を参照)。` : ''}</p>
     </div>
     <div class="kpis">
-      <div class="kpi"><span>合計</span><b>${usd(total)}</b></div>
+      <div class="kpi"><span>API換算の合計(参考値)</span><b>${usd(total)}</b></div>
       <div class="kpi"><span>作業日あたり</span><b>${usd(activeDays ? total / activeDays : 0)}</b><small>${activeDays}日</small></div>
       <div class="kpi"><span>トークン</span><b>${num(sum(t))}</b><small>出力 ${num(t[1])}</small></div>
       <div class="kpi"><span>キャッシュヒット率</span><b>${(hitRate * 100).toFixed(0)}%</b><small>入力側のうち読込</small></div>
@@ -143,7 +143,7 @@ export function renderCosts(root, data, { days, onSession }) {
     <div class="cost-tables">
       <h3>モデル別</h3>${buckets.length ? groupTable(buckets, (b) => b.model, 'モデル') : '<p class="hint">この期間の利用はありません。</p>'}
       ${buckets.length ? `<h3>プロジェクト別</h3>${groupTable(buckets, (b) => b.project, 'プロジェクト')}` : ''}
-      ${topSessions.length ? `<h3>コストの大きいセッション</h3><ol class="top-sessions">${topSessions.map((s) => `
+      ${topSessions.length ? `<h3>API換算の大きいセッション</h3><ol class="top-sessions">${topSessions.map((s) => `
         <li data-id="${esc(s.id)}"><span class="t">${esc(s.title)}</span><span class="small">${esc(s.project)} · ${new Date(s.start).toLocaleDateString('ja-JP')}</span><b>${usd(s.usd)}</b></li>`).join('')}</ol>` : ''}
     </div>`;
 

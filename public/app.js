@@ -206,7 +206,7 @@ function renderWeekStats() {
   $('detail').innerHTML = `
     <div class="stats">
       <h3>今週の作業 ${fmtDuration(total)} · ${state.sessions.length}セッション · ${state.sessions.reduce((n, s) => n + s.commits, 0)}コミット</h3>
-      <p class="small">この週に動いたセッションの API 換算コスト: ${fmtUsd(state.sessions.reduce((n, s) => n + s.cost.usd, 0))}(週をまたぐセッションは全体の額)</p>
+      <p class="small">この週に動いたセッションの API換算（参考値・請求額ではありません）: ${fmtUsd(state.sessions.reduce((n, s) => n + s.cost.usd, 0))}(週をまたぐセッションは全体の額)</p>
       ${rows.map(([name, ms]) => `
         <div class="bar-row">
           <span class="name"><span class="proj-dot" style="background:${projectColor(name)}"></span>${esc(name)}</span>
@@ -278,7 +278,7 @@ async function showDetail(id, { quiet = false } = {}) {
     <p class="meta">ツール: ${esc(tools || 'なし')}</p>
     <p class="meta">トークン: 入力 ${fmtNum(s.tokens.input + s.tokens.cacheRead + s.tokens.cacheCreation)}(キャッシュ読込 ${fmtNum(s.tokens.cacheRead)})/ 出力 ${fmtNum(s.tokens.output)}</p>
     <p class="meta">モデル: ${esc(s.models.join(', ') || '-')}</p>
-    <p class="meta">API 換算コスト: ${s.cost.usd === 0 && s.cost.unknownModels.length ? '単価不明(~/.work-log/pricing.json で設定)' : fmtUsd(s.cost.usd)}${s.cost.subagents ? `(サブエージェント ${s.cost.subagents}件 ${fmtUsd(s.cost.subagentUsd)} を含む)` : ''}${s.cost.estimatedOutputTokens ? ' · 一部見積もり' : ''}${s.cost.unknownModels.length ? ` · 単価不明: ${esc(s.cost.unknownModels.join(', '))}` : ''}</p>
+    <p class="meta">API換算（参考値・請求額ではありません）: ${s.cost.usd === 0 && s.cost.unknownModels.length ? '単価不明(~/.work-log/pricing.json で設定)' : fmtUsd(s.cost.usd)}${s.cost.subagents ? `(サブエージェント ${s.cost.subagents}件 ${fmtUsd(s.cost.subagentUsd)} を含む)` : ''}${s.cost.estimatedOutputTokens ? ' · 一部見積もり' : ''}${s.cost.unknownModels.length ? ` · 単価不明: ${esc(s.cost.unknownModels.join(', '))}` : ''}</p>
     ${s.hook ? `<p class="meta">hooks: ${s.hook.source ? `開始 ${esc(SOURCE_LABEL[s.hook.source] || s.hook.source)} · ` : ''}${s.hook.endedAt ? `終了 ${fmtTime(new Date(s.hook.endedAt))}(${esc(END_LABEL[s.hook.endReason] || s.hook.endReason || '-')}) · ` : ''}最終イベント ${esc(s.hook.lastEvent)} ${fmtTime(new Date(s.hook.lastEventAt))}</p>` : ''}
     <p class="meta small">${esc(s.cwd || '')}<br>${esc(s.id)}</p>`;
 
@@ -454,7 +454,7 @@ async function sendReport(target, period, button) {
   }
   const dlg = $('comment-dialog');
   $('comment-title').textContent = `${DEST_LABEL[target]}(${preview.status.destination})に${period === 'week' ? '週報' : '日報'}を送ります`;
-  $('comment-note').textContent = `次の内容が送られます(${DEST_LABEL[target]} では見出しが太字、タスクがリンクになります)。${destInfo(target).note || ''}${preview.status.includeCost ? 'API 換算コストを含みます。' : ''}`;
+  $('comment-note').textContent = `次の内容が送られます(${DEST_LABEL[target]} では見出しが太字、タスクがリンクになります)。${destInfo(target).note || ''}${preview.status.includeCost ? 'API換算の金額(参考値・請求額ではありません)を含みます。' : ''}`;
   $('comment-body').textContent = preview.previewText;
   dlg.showModal();
   dlg.onclose = async () => {
@@ -484,7 +484,7 @@ function calendarTools() {
   const on = all.filter((s) => s.configured);
   return `<div class="cal-export">
       <p class="small"><a href="${esc(ics)}" download>カレンダー(.ics)を書き出す</a>(この週の作業。秘匿情報は伏せます)</p>
-      <p class="small export-links">表計算ソフト向け: <a href="${esc(`/api/export.csv?${q}`)}" download>CSV</a> ・ <a href="${esc(`/api/export.xlsx?${q}`)}" download>Excel(.xlsx)</a>(作業の区間ごとの時間・コミット・コスト)</p>
+      <p class="small export-links">表計算ソフト向け: <a href="${esc(`/api/export.csv?${q}`)}" download>CSV</a> ・ <a href="${esc(`/api/export.xlsx?${q}`)}" download>Excel(.xlsx)</a>(作業の区間ごとの時間・コミット・API換算)</p>
       ${on.map((s) => `<div class="sync-send"><span class="small">${esc(s.label)}(${esc(s.destination)})</span><button data-sync="${esc(s.name)}">この週を${esc(s.label)}に記録…</button></div>`).join('')}
       ${on.length ? '' : all.length ? `<p class="small">${esc(all.map((s) => s.label).join('・'))} の環境変数を設定すると、作業をカレンダーや工数管理サービスに記録できます。</p>` : ''}
       ${syncDone ? `<p class="small">${esc(syncDone)}</p>` : ''}

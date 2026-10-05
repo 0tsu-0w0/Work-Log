@@ -144,7 +144,7 @@ test('テキスト: プレーンテキストで、リンクは URL を添える�
   const m = toLineWorks(r, { includeCost: true });
   assert.equal(m.messages.length, 1);
   assert.equal(m.messages[0], [
-    'Work Log 日報 2026/10/4(日)\n作業 20分・1セッション・0コミット・API 換算 $2.00',
+    'Work Log 日報 2026/10/4(日)\n作業 20分・1セッション・0コミット・API換算 $2.00(参考値)',
     '■ プロジェクト別\n・web  20分(1セッション・0コミット)',
     '■ タスク\n・WEB-1 (https://x.example/browse/WEB-1) A_B(Done)  20分',
     '■ セッション\n・01:00 *そのまま* <b> [x] — web・20分',

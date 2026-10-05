@@ -62,7 +62,7 @@ test('embeds: Markdown の記号を逃がし、タスクはリンクにする', 
   });
   const m = toDiscord(r, { includeCost: true });
   assert.equal(m.embeds[0].title, 'Work Log 日報 2026/10/4(日)');
-  assert.equal(m.embeds[0].description, '作業 20分・1セッション・0コミット・API 換算 $2.00');
+  assert.equal(m.embeds[0].description, '作業 20分・1セッション・0コミット・API換算 $2.00(参考値)');
   const sessions = m.embeds.find((e) => e.title === 'セッション').description;
   assert.match(sessions, /\\\*\\\*太字\\\*\\\* \\_x\\_ @everyone \\\[a\\\]\\\(b\\\)/);
   assert.match(m.embeds.find((e) => e.title === 'タスク').description, /• \[WEB\\-1\]\(https:\/\/x\.example\/browse\/WEB-1\) A\\_B\(Done\)  20分/);

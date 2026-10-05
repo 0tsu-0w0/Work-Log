@@ -97,11 +97,11 @@ test('本文: body と HTML。@ は全角にしてメンションにせず、HTM
     range,
   });
   const m = toMatrix(r, { includeCost: true });
-  assert.ok(m.body.startsWith('Work Log 日報 2026/10/4(日)\n作業 20分・1セッション・0コミット・API 換算 $2.00\n\n■ プロジェクト別\n・web  20分(1セッション・0コミット)'), m.body);
+  assert.ok(m.body.startsWith('Work Log 日報 2026/10/4(日)\n作業 20分・1セッション・0コミット・API換算 $2.00(参考値)\n\n■ プロジェクト別\n・web  20分(1セッション・0コミット)'), m.body);
   assert.ok(m.body.includes('＠room ＠bob:localhost <b>x</b> & "q"'), m.body);
   assert.ok(m.body.includes('・WEB-1 (https://x.example/browse/WEB-1?a=1&b="2") A<B ＠here(Done)'), m.body);
   assert.ok(m.body.includes('・＠bob:localhost  20分'), m.body);
-  assert.ok(m.formatted_body.startsWith('<h3>Work Log 日報 2026/10/4(日)</h3>\n<p>作業 20分・1セッション・0コミット・API 換算 $2.00</p>\n<h4>プロジェクト別</h4>\n<ul>\n<li>web  20分(1セッション・0コミット)</li>\n</ul>'), m.formatted_body);
+  assert.ok(m.formatted_body.startsWith('<h3>Work Log 日報 2026/10/4(日)</h3>\n<p>作業 20分・1セッション・0コミット・API換算 $2.00(参考値)</p>\n<h4>プロジェクト別</h4>\n<ul>\n<li>web  20分(1セッション・0コミット)</li>\n</ul>'), m.formatted_body);
   assert.ok(m.formatted_body.includes('＠room ＠bob:localhost &lt;b&gt;x&lt;/b&gt; &amp; &quot;q&quot;'), m.formatted_body);
   assert.ok(m.formatted_body.includes('<a href="https://x.example/browse/WEB-1?a=1&amp;b=%222%22">WEB-1</a> A&lt;B ＠here(Done)'), m.formatted_body);
   assert.doesNotMatch(m.formatted_body, /matrix\.to|javascript:|<b>/);

@@ -72,7 +72,7 @@ test('日報の JSON: 集計と各セッションを入れ、コストは指定�
   assert.deepEqual(m.projects, [{ project: 'web', activeMs: 20 * 60000, sessions: 1, commits: 0 }]);
   assert.deepEqual(m.tasks, [{ id: 'WEB-1', label: 'WEB-1', url: 'https://x.example/browse/WEB-1', activeMs: 20 * 60000, issue: { title: 'A', state: 'Done' } }]);
   assert.deepEqual(JSON.parse(JSON.stringify(m.sessions)), [{ id: 's1', title: 'ログイン修正', project: 'web', tool: 'claude', start: '2026-10-04T01:00:00Z', activeMs: 20 * 60000, commits: 0 }]);
-  assert.ok(m.text.startsWith('Work Log 日報 2026/10/4(日)\n作業 20分・1セッション・0コミット・API 換算 $2.00'), m.text);
+  assert.ok(m.text.startsWith('Work Log 日報 2026/10/4(日)\n作業 20分・1セッション・0コミット・API換算 $2.00(参考値)'), m.text);
   assert.ok(m.text.includes('・01:00 ログイン修正 — web・20分'), m.text);
   assert.deepEqual(JSON.parse(preview), JSON.parse(JSON.stringify(m))); // プレビューは送る JSON と同じ(整形したもの)
   assert.ok(preview.includes('\n  "type": "report"'));

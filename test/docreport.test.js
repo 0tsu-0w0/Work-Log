@@ -26,14 +26,14 @@ test('Markdown: 表・見出し・リンクを壊す記号を逃がす', () => {
   assert.equal(m.title, 'Work Log 日報 2026-10-04(日)');
   assert.equal(m.period, 'day');
   assert.equal(m.start, '2026-10-04');
-  assert.ok(m.body.startsWith('作業 40分・2セッション・0コミット・API 換算 \\$2.00\n\n## プロジェクト別\n\n| プロジェクト | 作業時間 | セッション | コミット |'), m.body);
+  assert.ok(m.body.startsWith('作業 40分・2セッション・0コミット・API換算 \\$2.00(参考値)\n\n## プロジェクト別\n\n| プロジェクト | 作業時間 | セッション | コミット |'), m.body);
   assert.ok(m.body.includes('\\# 見出し \\| a\\<b\\> \\*x\\* \\_y\\_ \\[z\\](http://e) \\`c\\` \\~d\\~ \\$e\\$ \\& "q"'), m.body);
   assert.ok(m.body.includes('\\- 箇条書き(Codex)'), m.body);
   assert.ok(m.body.includes('- [WEB-1](https://x.example/browse/WEB-1?a=%28b%29%20c) A\\_B \\<x\\>(Done)  20分'), m.body);
   assert.doesNotMatch(m.body, /javascript:/); // http(s) 以外はリンクにしない
   assert.ok(m.body.endsWith('*ローカルの AI コーディングツールのセッションログから Work Log で作成*'));
   assert.ok(m.preview.startsWith('# Work Log 日報 2026-10-04(日)'));
-  assert.doesNotMatch(toEsa(report()).body, /API 換算/); // コストは指定したときだけ
+  assert.doesNotMatch(toEsa(report()).body, /API換算/); // コストは指定したときだけ
 });
 
 test('Markdown: セッションは多いときに件数を絞る', () => {
@@ -47,7 +47,7 @@ test('Confluence: storage format(XHTML)で & < > " を逃がす', () => {
   assert.equal(xEsc('a&b<c>"d"\u0001\n'), 'a&amp;b&lt;c&gt;&quot;d&quot; ');
   const m = toConfluence(report(), { includeCost: true });
   assert.equal(m.title, 'Work Log 日報 2026/10/4(日)');
-  assert.ok(m.body.startsWith('<p>作業 40分・2セッション・0コミット・API 換算 $2.00</p><h2>プロジェクト別</h2><table><tbody><tr><th>プロジェクト</th>'), m.body);
+  assert.ok(m.body.startsWith('<p>作業 40分・2セッション・0コミット・API換算 $2.00(参考値)</p><h2>プロジェクト別</h2><table><tbody><tr><th>プロジェクト</th>'), m.body);
   assert.ok(m.body.includes('<td># 見出し | a&lt;b&gt; *x* _y_ [z](http://e) `c` ~d~ $e$ &amp; &quot;q&quot;</td>'), m.body);
   assert.ok(m.body.includes('<li><a href="https://x.example/browse/WEB-1?a=(b) c">WEB-1</a> A_B &lt;x&gt;(Done)  20分</li>'), m.body);
   assert.doesNotMatch(m.body, /javascript:|<script/);

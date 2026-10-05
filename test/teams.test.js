@@ -72,7 +72,7 @@ test('Adaptive Card: Markdown の記号を無害にし、タスクはリンク�
   assert.equal(a.content.type, 'AdaptiveCard');
   const t = texts(m);
   assert.equal(t[0], 'Work Log 日報 2026/10/4(日)');
-  assert.equal(t[1], '作業 20分・1セッション・0コミット・API 換算 $2.00');
+  assert.equal(t[1], '作業 20分・1セッション・0コミット・API換算 $2.00(参考値)');
   assert.ok(t.some((x) => x.includes('＊＊太字＊＊ ＿x＿ ［a］(b)')));
   assert.ok(t.some((x) => x === '- [WEB-1](https://x.example/browse/WEB-1%20%28a%29) A＿B(Done)  20分'));
   assert.ok(!texts(toTeams(r)).some((x) => x.includes('$'))); // コストは指定したときだけ

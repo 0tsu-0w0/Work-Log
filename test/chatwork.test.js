@@ -52,7 +52,7 @@ test('本文: Chatwork の記法になる [ ] を全角にし、タスクは URL
     range,
   });
   const m = toChatwork(r, { includeCost: true });
-  assert.ok(m.body.startsWith('[info][title]Work Log 日報 2026/10/4(日)[/title]作業 20分・1セッション・0コミット・API 換算 $2.00\n[hr]\nプロジェクト別\n'), m.body);
+  assert.ok(m.body.startsWith('[info][title]Work Log 日報 2026/10/4(日)[/title]作業 20分・1セッション・0コミット・API換算 $2.00(参考値)\n[hr]\nプロジェクト別\n'), m.body);
   assert.ok(m.body.endsWith('[/info]'));
   assert.ok(m.body.includes('・01:00 ［To:123］'), m.body);
   assert.ok(m.body.includes('［To:123］ ［toall］ ［info］x［/info］ ［hr］'), m.body);

@@ -68,9 +68,9 @@ export function renderTasks(root, tasks, { onSession, onComment }) {
   }
   const totalMs = tasks.reduce((n, t) => n + t.activeMs, 0);
   root.innerHTML = `
-    <p class="small">期間内に動いたセッションを、タスクごとにまとめています。時間・コスト・コミットはセッション全体の値で、1つのセッションが複数のタスクに紐付くとそれぞれに数えます。</p>
+    <p class="small">期間内に動いたセッションを、タスクごとにまとめています。時間・API換算(参考値・請求額ではありません)・コミットはセッション全体の値で、1つのセッションが複数のタスクに紐付くとそれぞれに数えます。</p>
     <table class="task-table">
-      <thead><tr><th>タスク</th><th>見つけた場所</th><th>プロジェクト</th><th class="n">セッション</th><th class="n">作業時間</th><th class="n">コミット</th><th class="n">コスト</th><th>期間</th></tr></thead>
+      <thead><tr><th>タスク</th><th>見つけた場所</th><th>プロジェクト</th><th class="n">セッション</th><th class="n">作業時間</th><th class="n">コミット</th><th class="n" title="参考値・請求額ではありません">API換算</th><th>期間</th></tr></thead>
       <tbody>${tasks.map((t, i) => `
         <tr class="task-row" data-i="${i}">
           <td><button class="toggle" aria-expanded="${expanded.has(t.id)}" aria-label="セッションを表示">${expanded.has(t.id) ? '▾' : '▸'}</button> ${taskLink(t)}${t.provider ? ` <span class="provider">${esc(PROVIDER_LABEL[t.provider])}</span>` : ''}${issueInfo(t)}</td>

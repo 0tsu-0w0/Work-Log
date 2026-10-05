@@ -296,7 +296,7 @@ test('本文: text と html。利用者の文字列は HTML として逃がし�
   });
   const m = toEmail(r, { includeCost: true });
   assert.equal(m.subject, 'Work Log 日報 2026/10/4(日)');
-  assert.ok(m.text.startsWith('Work Log 日報 2026/10/4(日)\n作業 20分・1セッション・0コミット・API 換算 $2.00\n\n■ プロジェクト別\n・web  20分(1セッション・0コミット)'), m.text);
+  assert.ok(m.text.startsWith('Work Log 日報 2026/10/4(日)\n作業 20分・1セッション・0コミット・API換算 $2.00(参考値)\n\n■ プロジェクト別\n・web  20分(1セッション・0コミット)'), m.text);
   assert.ok(m.text.includes(`<script>alert(1)</script> & "q" 's' @room`));
   assert.ok(m.text.endsWith('\n-- \nローカルの AI コーディングツールのセッションログから Work Log で作成'));
   assert.equal(m.preview, m.text);
