@@ -12,6 +12,8 @@ import { Mattermost } from './mattermost.js';
 import { RocketChat } from './rocketchat.js';
 import { LineWorks } from './lineworks.js';
 import { Webhook } from './webhook.js';
+import { Email } from './email.js';
+import { Matrix } from './matrix.js';
 import { Confluence } from './confluence.js';
 import { Esa } from './esa.js';
 import { QiitaTeam } from './qiitateam.js';
@@ -22,7 +24,7 @@ import {
   toTeams, sessionEndTeams, plainFromTeams, toGoogleChat, sessionEndGoogleChat, plainFromGoogleChat,
   toChatwork, sessionEndChatwork, plainFromChatwork, toMattermost, sessionEndMattermost, plainFromMattermost,
   toRocketChat, sessionEndRocketChat, plainFromRocketChat, toLineWorks, sessionEndLineWorks, plainFromLineWorks,
-  toWebhook, sessionEndWebhook, plainFromWebhook,
+  toWebhook, sessionEndWebhook, plainFromWebhook, toEmail, sessionEndEmail, plainFromEmail, toMatrix, sessionEndMatrix, plainFromMatrix,
 } from './report.js';
 
 const CHANNEL_NOTE = 'チャンネルの参加者全員が読めます。';
@@ -37,6 +39,8 @@ export const DESTINATIONS = [
   { name: 'rocketchat', label: 'Rocket.Chat', flag: '--rocketchat', env: 'ROCKETCHAT_WEBHOOK_URL', Client: RocketChat, report: toRocketChat, sessionEnd: sessionEndRocketChat, plain: plainFromRocketChat, note: CHANNEL_NOTE },
   { name: 'lineworks', label: 'LINE WORKS', flag: '--lineworks', env: 'LINEWORKS_CLIENT_ID', Client: LineWorks, report: toLineWorks, sessionEnd: sessionEndLineWorks, plain: plainFromLineWorks, note: 'トークルームのメンバー全員が読めます。長い日報は複数のメッセージに分けて送ります。' },
   { name: 'webhook', label: 'Webhook', flag: '--webhook', env: 'WORKLOG_WEBHOOK_URL', Client: Webhook, report: toWebhook, sessionEnd: sessionEndWebhook, plain: plainFromWebhook, note: '設定した URL の先のサービス(Zapier・n8n・Make など)が、集計と各セッションのタイトルを JSON で受け取ります。そこからの転送先は Work Log では分かりません。' },
+  { name: 'email', label: 'メール', flag: '--email', env: 'SMTP_URL', Client: Email, report: toEmail, sessionEnd: sessionEndEmail, plain: plainFromEmail, maxSessions: 100, note: '設定した宛先(MAIL_TO / email.to)の全員が読めます。メールは転送されることがあり、送った後に取り消せません。' },
+  { name: 'matrix', label: 'Matrix', flag: '--matrix', env: 'MATRIX_ACCESS_TOKEN', Client: Matrix, report: toMatrix, sessionEnd: sessionEndMatrix, plain: plainFromMatrix, note: 'ルームのメンバー全員が読めます(公開ルームなら誰でも。暗号化はしないので、暗号化したルームには送らないでください)。' },
   { name: 'confluence', label: 'Confluence', flag: '--confluence', env: 'CONFLUENCE_BASE_URL', Client: Confluence, report: toConfluence, plain: plainFromMarkdown, maxSessions: 500, note: 'スペースを見られる人全員が読めます。同じ日・週のページは上書きされます。' },
   { name: 'esa', label: 'esa', flag: '--esa', env: 'ESA_ACCESS_TOKEN', Client: Esa, report: toEsa, plain: plainFromMarkdown, maxSessions: 500, note: 'チームのメンバー全員が読めます(公開した記事として保存します)。同じ日・週の記事は上書きされます。' },
   { name: 'qiitateam', label: 'Qiita Team', flag: '--qiita-team', env: 'QIITA_ACCESS_TOKEN', Client: QiitaTeam, report: toQiitaTeam, plain: plainFromMarkdown, maxSessions: 500, note: 'チームのメンバー全員が読めます。同じ日・週の記事は上書きされます。' },
