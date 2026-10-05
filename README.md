@@ -8,12 +8,12 @@ Claude Code の作業履歴を `~/.claude/projects/` 配下の JSONL から自�
 
 - 依存パッケージなし(Node.js 20 以上)
 - `127.0.0.1` のみで待ち受け。Host が `127.0.0.1` / `localhost` 以外の要求は断ります(DNS リバインディング対策)。書き込み系(POST)は、自分以外の Origin からの要求を断ります(他サイトからの CSRF 対策)。hooks からの通知は Origin を付けないので通ります
-- ログは外部に送信しません。LLM 要約だけはオプトインで、送信前に秘匿情報をマスキングします。課題管理サービス(GitHub / GitLab / Linear / Jira / Backlog / Notion)の課題の情報取得とコメント投稿も任意で、取得はタスクIDの検出結果をもとに各サービスの API へ問い合わせるだけです(「課題管理サービス連携」を参照)。Slack / Discord / Teams / Google Chat / Chatwork / Mattermost / Rocket.Chat / LINE WORKS / 汎用 Webhook / Confluence / esa / Qiita Team / Obsidian への日報・週報の送信も任意で、送るのは利用者が操作したとき(または通知を設定したとき)だけです(「送り先連携」を参照)。Google カレンダー・Toggl Track・Clockify・Harvest への記録も任意で、確認してから送ります(「カレンダーと工数管理」を参照)
+- ログは外部に送信しません。LLM 要約だけはオプトインで、送信前に秘匿情報をマスキングします。課題管理サービス(GitHub / GitLab / Linear / Jira / Backlog / Notion / Redmine / Gitea)の課題の情報取得とコメント投稿も任意で、取得はタスクIDの検出結果をもとに各サービスの API へ問い合わせるだけです(「課題管理サービス連携」を参照)。Slack / Discord / Teams / Google Chat / Chatwork / Mattermost / Rocket.Chat / LINE WORKS / Matrix / メール(SMTP)/ 汎用 Webhook / Confluence / esa / Qiita Team / Obsidian への日報・週報の送信も任意で、送るのは利用者が操作したとき(または通知を設定したとき)だけです(「送り先連携」を参照)。Google カレンダー・Toggl Track・Clockify・Harvest・CalDAV・Redmine・Jira への記録も任意で、確認してから送ります(「カレンダーと工数管理」を参照)。`/metrics`(Prometheus 形式)は、有効にしたときだけ 127.0.0.1 に出します
 - Claude Code、Codex CLI、Gemini CLI、Copilot CLI、Aider、Cursor のログを、同じカレンダーとコストの画面で扱います(ツールで絞り込めます。「他のツールのログ」を参照)
 - ログの変更をファイル監視で検知し、画面を自動更新します
 - Claude Code の hooks に登録すると、作業中・入力待ちの状態をリアルタイムに表示します(任意)
-- 日報・週報を Slack や Discord、Microsoft Teams、Google Chat、Chatwork、Mattermost、Rocket.Chat、LINE WORKS、汎用 Webhook、Confluence、esa、Qiita Team、Obsidian に送れます。セッション終了の通知も任意で設定できます(送り先連携)
-- 作業のセッションを `.ics` に書き出したり、Google カレンダー・Toggl Track・Clockify・Harvest に記録したりできます(カレンダーと工数管理)
+- 日報・週報を Slack や Discord、Microsoft Teams、Google Chat、Chatwork、Mattermost、Rocket.Chat、LINE WORKS、Matrix、メール、汎用 Webhook、Confluence、esa、Qiita Team、Obsidian に送れます。セッション終了の通知も任意で設定できます(送り先連携)
+- 作業のセッションを `.ics` や CSV / Excel(.xlsx)に書き出したり、Google カレンダー・Toggl Track・Clockify・Harvest・CalDAV・Redmine・Jira に記録したりできます(カレンダーと工数管理)。Prometheus の指標も出せます
 - 送り先・ログの取り込み元・記録先は、それぞれ 1 つの一覧(`src/destinations.js` / `src/sources.js` / `src/sync/index.js`)に 1 項目足せば増やせます(「ディレクトリ構成」を参照)
 
 ## 使い方
@@ -42,8 +42,11 @@ node src/cli.js report --confluence  # Confluence のページに保存 (同上)
 node src/cli.js report --esa         # esa の記事に保存 (同上)
 node src/cli.js report --qiita-team  # Qiita Team の記事に保存 (同上)
 node src/cli.js report --obsidian    # Obsidian の Vault にノートとして保存 (同上)
+node src/cli.js report --email       # メールで (同上。SMTP_URL / MAIL_FROM / MAIL_TO)
+node src/cli.js report --matrix      # Matrix のルームへ (同上)
 node src/cli.js ical [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--out file]  # 作業を .ics に書き出す (省くと過去 30 日、標準出力へ。カレンダーと工数管理を参照)
-node src/cli.js sync --gcal|--toggl|--clockify|--harvest [--week] [--date YYYY-MM-DD] [--from … --to …] [--tz <IANA名>] [--dry-run]  # 記録先に送る (--dry-run は一覧を表示するだけ)
+node src/cli.js export --csv|--xlsx [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--per session] [--out file]  # 表計算ソフト向けに書き出す (省くと過去 30 日。CSV は標準出力へ。.xlsx は --out か、端末でない標準出力へ。カレンダーと工数管理を参照)
+node src/cli.js sync --gcal|--toggl|--clockify|--harvest|--caldav|--redmine-time|--jira-worklog [--week] [--date YYYY-MM-DD] [--from … --to …] [--tz <IANA名>] [--dry-run]  # 記録先に送る (--dry-run は一覧を表示するだけ)
 npm test                           # テストを実行
 ```
 
@@ -135,6 +138,23 @@ npm test                           # テストを実行
 | `WORKLOG_CLOCKIFY_API` | Clockify の API の URL。主にテスト用です(`clockify.baseUrl` でも変えられます) |
 | `HARVEST_ACCESS_TOKEN` | Harvest の Personal Access Token |
 | `HARVEST_ACCOUNT_ID` | Harvest のアカウント ID |
+| `SMTP_URL` | メール送信の SMTP サーバー。`smtp://user:pass@host:587`(STARTTLS)か `smtps://user:pass@host:465`(最初から TLS)。ユーザー名とパスワードは URL エンコードして書きます |
+| `MAIL_FROM` | メールの差出人(`email.from` が優先) |
+| `MAIL_TO` | メールの宛先。カンマ区切りで複数(`email.to` が優先) |
+| `WORKLOG_SMTP_SECURE=1` | `smtp://` でも最初から TLS で話します(465 番は URL に関係なく最初から TLS) |
+| `WORKLOG_SMTP_INSECURE=1` | SMTP の証明書を確かめません。手元のテスト用です。自己署名の CA は `NODE_EXTRA_CA_CERTS` で足せます |
+| `MATRIX_HOMESERVER` | Matrix のホームサーバーの URL。`https` のもの(`http` は `localhost` / `127.0.0.1` / `::1` だけ) |
+| `MATRIX_ACCESS_TOKEN` | Matrix のアクセストークン(Bearer で送ります) |
+| `MATRIX_ROOM_ID` | 送り先のルーム ID(`!` で始まるもの。`#別名` は使えません。`matrix.roomId` が優先) |
+| `REDMINE_URL` | Redmine の URL(`tasks.redmine.baseUrl` が優先)。課題の取得と作業時間の記録に使います |
+| `REDMINE_API_KEY` | Redmine の API キー(`X-Redmine-API-Key` ヘッダーで送ります)。作業時間の記録はこの鍵の利用者のものになります |
+| `WORKLOG_REDMINE_API` | 作業時間の記録先の Redmine の URL。主にテスト用です |
+| `GITEA_URL` | Gitea / Forgejo の URL(`tasks.gitea.baseUrl` が優先。`FORGEJO_URL` でも可) |
+| `GITEA_TOKEN` | Gitea / Forgejo のアクセストークン(`Authorization: token` で送ります。`FORGEJO_TOKEN` でも可) |
+| `CALDAV_URL` | CalDAV のカレンダーのコレクションの URL(`caldav.url` でも可) |
+| `CALDAV_USERNAME` | CalDAV の Basic 認証のユーザー名 |
+| `CALDAV_PASSWORD` | CalDAV の Basic 認証のパスワード(アプリパスワード推奨) |
+| `WORKLOG_METRICS=1` | `GET /metrics`(Prometheus 形式)を有効にします(`config.json` の `metrics.enabled` でも可) |
 | `PORT` | 待ち受けポート(`--port` が優先) |
 
 ## Codex 対応
@@ -344,7 +364,7 @@ Claude Code on the web などのクラウドセッションは、ユーザーの
 - `keyUrl`: キー形式のリンク先です。`{id}` がタスクIDに置き換わります。
 - `urls`: プレフィックスごとのリンク先です。`keyUrl` より優先します。
 - `github`: `false` にすると、`#123` 系(`owner/repo#123`、`GH-123`、GitHub の URL、番号だけのブランチ名)と、GitLab の `!123`・URL も拾いません。
-- `gitlab` / `linear` / `jira` / `backlog` / `notion`: サービスごとの接続先とキーのプレフィックスです(「課題管理サービス連携」を参照)。
+- `gitlab` / `linear` / `jira` / `backlog` / `notion` / `redmine` / `gitea`: サービスごとの接続先とキーのプレフィックス(Redmine は `projects`・`format`、Gitea は `repos` も)です(「課題管理サービス連携」を参照)。
 
 ### 手動の付け外し
 
@@ -367,9 +387,9 @@ Claude Code on the web などのクラウドセッションは、ユーザーの
 
 キーワード検索は、タスクIDでも引けます。API では `/api/sessions?task=ID` で絞り込めます(`GET /api/tasks` はタスクごとの集計です)。
 
-### 課題管理サービス連携(GitHub / GitLab / Linear / Jira / Backlog / Notion)
+### 課題管理サービス連携(GitHub / GitLab / Linear / Jira / Backlog / Notion / Redmine / Gitea)
 
-解決できたタスクについて、各サービスの API から課題の情報を取得して表示します。GitHub と GitLab は設定なしで使えます(トークンが無くても公開リポジトリ・公開プロジェクトなら読めます)。Linear / Jira / Backlog / Notion は、接続先や認証情報を設定したときだけ問い合わせます。
+解決できたタスクについて、各サービスの API から課題の情報を取得して表示します。GitHub と GitLab は設定なしで使えます(トークンが無くても公開リポジトリ・公開プロジェクトなら読めます)。Linear / Jira / Backlog / Notion / Redmine / Gitea(Forgejo)は、接続先や認証情報を設定したときだけ問い合わせます。
 
 共通の動作:
 
@@ -385,7 +405,7 @@ Claude Code on the web などのクラウドセッションは、ユーザーの
 
 - タスクビューでは、タスク欄にサービス名・タイトル・状態・ラベル・担当者を表示します。詳細パネルの「タスク」欄は、状態を表示し、タイトルはホバーで見られます。
 - 取れなかったときは、タスクビューにサービス名と理由を表示します(見つからないか権限がない、認証情報が無いか正しくない、読む権限がない、API 制限中、タイムアウト、接続できない)。それ以外の HTTP エラーは、ステータスコードを表示します。
-- 結果は `~/.work-log/` にサービスごとのファイル `tracker-<name>.json`(`tracker-gitlab.json`、`tracker-linear.json`、`tracker-jira.json`、`tracker-backlog.json`、`tracker-notion.json`)で保存します。GitHub だけは従来どおり `github.json` です。
+- 結果は `~/.work-log/` にサービスごとのファイル `tracker-<name>.json`(`tracker-gitlab.json`、`tracker-linear.json`、`tracker-jira.json`、`tracker-backlog.json`、`tracker-notion.json`、`tracker-redmine.json`、`tracker-gitea.json`)で保存します。GitHub だけは従来どおり `github.json` です。
 - 再確認までの時間は、進行中(未着手を含む)が 10 分、完了・中止が 1 日、取得に失敗したものが 30 分です。
 - API 制限に達したら、解除の時刻まで、そのサービスには問い合わせません。
 - 画面は取得を最大約 2.5 秒だけ待ちます。それ以上かかる分は裏で取得を続け、取れたら画面を自動更新します。同時に取得するのは 4 件までです(1 回のリクエストは 8 秒でタイムアウトします)。
@@ -403,6 +423,8 @@ Claude Code on the web などのクラウドセッションは、ユーザーの
 | Jira | `JIRA_BASE_URL`、`JIRA_EMAIL` + `JIRA_API_TOKEN`、`JIRA_PAT` | `jira.baseUrl`、`jira.keys` | 接続先と認証情報 |
 | Backlog | `BACKLOG_SPACE`、`BACKLOG_API_KEY` | `backlog.space`、`backlog.keys` | スペースと `BACKLOG_API_KEY` |
 | Notion | `NOTION_TOKEN` / `NOTION_API_KEY`、`NOTION_DATABASE_ID` / `NOTION_DATA_SOURCE_ID` | `notion.databaseId` / `notion.dataSourceId`、`notion.keys`、`notion.idProperty` | トークン(ページ URL のみ扱うなら)。キー形式も扱うならデータベースの指定も |
+| Redmine | `REDMINE_URL`、`REDMINE_API_KEY` | `redmine.baseUrl`、`redmine.format`、`redmine.projects`、`redmine.keys` | 接続先と `REDMINE_API_KEY` |
+| Gitea / Forgejo | `GITEA_URL`、`GITEA_TOKEN`(`FORGEJO_URL` / `FORGEJO_TOKEN` も可) | `gitea.baseUrl`、`gitea.repos` | 接続先とトークン |
 
 ```json
 {
@@ -411,7 +433,9 @@ Claude Code on the web などのクラウドセッションは、ユーザーの
     "linear": { "keys": ["<PREFIX>"], "workspace": "<workspace>" },
     "jira": { "baseUrl": "https://<your-site>.atlassian.net", "keys": ["<PREFIX>"] },
     "backlog": { "space": "<space>.backlog.jp", "keys": ["<PREFIX>"] },
-    "notion": { "databaseId": "<32桁のデータベースID>", "keys": ["<PREFIX>"], "idProperty": "<IDプロパティ名>" }
+    "notion": { "databaseId": "<32桁のデータベースID>", "keys": ["<PREFIX>"], "idProperty": "<IDプロパティ名>" },
+    "redmine": { "baseUrl": "https://redmine.example.com", "format": "markdown", "projects": ["<Work Log のプロジェクト名>"], "keys": ["RM"] },
+    "gitea": { "baseUrl": "https://git.example.com", "repos": ["owner/repo"] }
   }
 }
 ```
@@ -420,7 +444,7 @@ Claude Code on the web などのクラウドセッションは、ユーザーの
 
 #### `ABC-123` 形式の振り分け
 
-`ABC-123` のようなキー形式は、Linear・Jira・Backlog・Notion のどれの課題か分からないので、次の順で決めます。
+`ABC-123` のようなキー形式は、Linear・Jira・Backlog・Notion のどれの課題か分からないので、次の順で決めます。Redmine の `#123` と Gitea の `owner/repo#12` は GitHub と同じ形なので、別の規則で振り分けます(「Redmine」「Gitea / Forgejo」を参照)。
 
 1. ログ中の URL のホスト: `linear.app` は Linear、`notion.so` / `www.notion.so` / `*.notion.site` は Notion、`*.backlog.jp` / `*.backlog.com`(`backlogtool` のドメインも)は Backlog、`/browse/` を含み `*.atlassian.net` か設定した Jira のホストなら Jira です。
 2. `tasks.<サービス>.keys` のプレフィックス(Linear、Jira、Backlog、Notion の順に調べます)。
@@ -485,19 +509,33 @@ issue(`#123`)と マージリクエスト(`!123`)が対象です。
 - 状態の分類は、データソースの `status` のグループで決めます。既定の To-do が未着手、In progress が進行中、Complete が完了です。状態名に「中止」「見送り」「cancel」などを含むときは、中止・見送りとします。データソースの定義は 1 時間使い回します。
 - `tasks.notion.keys` はキーのプレフィックスです。リンク先は、取得したページの URL です。
 
+#### Redmine
+
+- 接続先は `tasks.redmine.baseUrl` か `REDMINE_URL`、鍵は `REDMINE_API_KEY`(`X-Redmine-API-Key` ヘッダー)です。取得するのは、タイトル、状態(`status.is_closed` で完了を判定)、トラッカー、担当者、優先度です。
+- `#123` は、次の順で Redmine の課題と決めます。(1) URL が `REDMINE_URL` の下の課題の URL、(2) `tasks.redmine.projects`(Work Log のプロジェクト名の配列。そのプロジェクトの `#123` を Redmine とみなす。`"*"` ですべて)、`tasks.redmine.keys`(`RM-123` を `#123` とみなす)、(3) セッションのリポジトリが無いときは、Redmine を設定していれば Redmine。
+- 作業記録のコメントは、課題の注記(`PUT /issues/{id}.json`)として投稿します。書式は API から分からないため、`tasks.redmine.format` で `markdown`(既定)か `textile` を指定します。Textile では表の記号などを `<notextile>` で囲んで逃がします。
+- 公開プロジェクトは鍵が間違っていても匿名で読めるため、鍵の誤りは投稿のときに初めて分かります。
+
+#### Gitea / Forgejo
+
+- 接続先は `tasks.gitea.baseUrl` か `GITEA_URL`(`FORGEJO_URL` も可)、トークンは `GITEA_TOKEN`(`FORGEJO_TOKEN` も可。`Authorization: token` で送ります)です。2 つは同じ API(`/api/v1`)なので同じ実装で扱います。取得するのは、タイトル、状態、ラベル、担当者で、プルリクエストも扱います。
+- `owner/repo#12` は、URL が `GITEA_URL` の下の issue の URL、`tasks.gitea.repos`(`"owner/repo"` の配列)に載っているリポジトリ、セッションのリポジトリのホストが Gitea のホスト、の順で Gitea のものと決めます。
+- 作業記録のコメントは、issue のコメント(`POST …/issues/{n}/comments`)で、書式は Markdown です。
+
 #### 作業記録のコメント
 
-課題に、そのタスクの作業記録をコメントとして投稿できます。対象は GitHub に限らず、GitLab・Linear・Jira・Backlog・Notion の課題です。
+課題に、そのタスクの作業記録をコメントとして投稿できます。対象は GitHub に限らず、GitLab・Linear・Jira・Backlog・Notion・Redmine・Gitea の課題です。
 
 1. タスクビューでタスクを▸で展開し、「<サービス> の <ID> に作業記録をコメント…」を押します。ボタンは、課題の情報が取得できたタスクにだけ出ます(まだ取得できていない課題や、見つからない課題には出ません)。
 2. 確認ダイアログに、投稿される本文がそのまま表示されます。本文は、セッションの開始時刻・タイトル・ツール・作業時間・コミット数(とハッシュ)と、合計です。時刻はブラウザのタイムゾーンで書きます。
 3. 「投稿する」を押したときだけ投稿します。「やめる」では何も送りません。
 
-本文の書式は、サービスに合わせて 3 通りに書き分けます。Notion は、Backlog と同じプレーンテキストです。
+本文の書式は、サービスに合わせて書き分けます(Redmine は設定で Markdown と Textile を選びます)。Notion は、Backlog と同じプレーンテキストです。
 
 | サービス | 書式 |
 | --- | --- |
-| GitHub / GitLab / Linear | Markdown の表 |
+| GitHub / GitLab / Linear / Gitea | Markdown の表 |
+| Redmine | `tasks.redmine.format` に従い、Markdown の表か Textile の表(既定は Markdown) |
 | Jira | Wiki 記法の表。`\|`、`{`、`}`、`[`、`]` は記法として解釈されるため、全角にします |
 | Backlog / Notion | 箇条書きのプレーンテキスト。Backlog は、プロジェクトの記法が Backlog 記法でも Markdown でも崩れないよう、表を使いません |
 
@@ -514,17 +552,19 @@ Notion には `POST /v1/comments` で、ページへのコメントとして投�
 - GitLab: 実際の公開 API で、issue、MR、見つからないもの、ETag の再確認(304)まで確認しました。コメントの投稿は、実際の API では確認していません。
 - GitHub: 応答形式はテストの偽サーバーで確認しています。実際の API には、「見つからない」の応答まで接続して確認しました。実在する issue の取得とコメントの投稿は、実際の API では確認していません。
 - Linear / Jira / Backlog: この開発環境から接続できないため、実際のサービスでは確認していません。公式の SDK / ドキュメント(`@linear/sdk` の型定義、gitlabhq の `doc/api`、nulab/backlog-js、jira.js)に合わせた偽サーバーとテストでだけ確認しています。実際に使うときは、まず取得の表示から確かめてください。
+- Redmine(Docker の `redmine:6` = 6.1.5): 実際のサーバーで確認しました。課題の取得(状態・トラッカー・担当者・優先度)、`X-Redmine-API-Key` での認証、注記の投稿(204 で本文なし。`?include=journals` で注記の ID が分かり、課題の画面に `id="change-{id}"` が出る)、新しく入れた Redmine の既定の書式が Markdown(`common_mark`)であること、書式を Textile にしたサーバーで作業記録が表として表示されることです。確認で見つけた不具合は、Textile の記号の逃がし方(`<notextile>` で囲むようにしました)です。未確認: Redmine 5.x 以前(`status.is_closed` が無い版は状態の名前から推測します)、非公開プロジェクトでの 401 / 403 の応答。
+- Gitea(Docker の `gitea/gitea:latest` = 28.0.0): 実際のサーバーで確認しました。issue の取得(タイトル・状態・ラベル・担当者・プルリクエストの区別)、`Authorization: token`、コメントの投稿(コメントへのリンクが返る)、閉じた issue、存在しない issue(404)、誤ったトークン(401)です。未確認: Forgejo(この環境から codeberg.org のレジストリに届かず、Docker Hub は利用制限で取得できませんでした。API は Gitea から分かれたもので同じ形のはずです)、プルリクエストのマージ済み・下書きの状態、ETag。
 - Notion: Notion の API にもこの開発環境から接続できないため、実際のサービスでは確認していません。公式 SDK(`@notionhq/client`、`Notion-Version` 2025-09-03)の型定義に合わせた偽サーバーとテスト(`test/notion.test.js`)でだけ確認しています。取得もコメントの投稿も、実際に使うときはまず取得の表示から確かめてください。
 
 ## 送り先連携
 
-日報・週報を、チャット(Slack、Discord、Microsoft Teams、Google Chat、Chatwork、Mattermost、Rocket.Chat、LINE WORKS)、汎用 Webhook、ドキュメント(Confluence、esa、Qiita Team、Obsidian)に送ります。画面からも CLI からも送れます。送り先は `src/destinations.js` の一覧にあり、1 項目足せば増やせます。セッション終了の通知(任意)もあります。送り先は 1 つでも複数でも設定でき、設定が無ければ何も送りません。
+日報・週報を、チャット(Slack、Discord、Microsoft Teams、Google Chat、Chatwork、Mattermost、Rocket.Chat、LINE WORKS、Matrix)、メール(SMTP)、汎用 Webhook、ドキュメント(Confluence、esa、Qiita Team、Obsidian)に送ります。画面からも CLI からも送れます。送り先は `src/destinations.js` の一覧にあり、1 項目足せば増やせます。セッション終了の通知(任意)もあります。送り先は 1 つでも複数でも設定でき、設定が無ければ何も送りません。
 
 ### 共通の動作
 
 - 日報・週報の内容、期間、タイムゾーンの扱いは、どちらの送り先でも同じです(「日報・週報の内容」)。
 - 画面からは、確認ダイアログで送る内容を見てから送ります。プレビューの後に内容が変わったときは、送らずに、もう一度確認するよう求めます。
-- CLI の `report` は、送り先のオプション(`--slack` / `--discord` / `--teams` / `--google-chat` / `--chatwork` / `--mattermost` / `--rocketchat` / `--lineworks` / `--webhook` / `--confluence` / `--esa` / `--qiita-team` / `--obsidian`)を付けると確認なしで送ります。
+- CLI の `report` は、送り先のオプション(`--slack` / `--discord` / `--teams` / `--google-chat` / `--chatwork` / `--mattermost` / `--rocketchat` / `--lineworks` / `--matrix` / `--email` / `--webhook` / `--confluence` / `--esa` / `--qiita-team` / `--obsidian`)を付けると確認なしで送ります。
 - セッション終了の通知は、送り先ごとに `notify` を設定します。送ったものは二度送りません。
 - 本文は、書式を整える前に秘匿情報をマスキングします(「秘匿情報」)。
 - Webhook の URL とトークンはサーバー側だけで使い、ブラウザには渡しません。
@@ -547,6 +587,8 @@ Notion には `POST /v1/comments` で、ページへのコメントとして投�
 | Mattermost | Incoming Webhook | `MATTERMOST_WEBHOOK_URL` | `mattermost` | なし | あり |
 | Rocket.Chat | Incoming Webhook | `ROCKETCHAT_WEBHOOK_URL` | `rocketchat` | なし | あり |
 | LINE WORKS | Bot API 2.0 | `LINEWORKS_*`(後述) | `lineworks` | なし | あり |
+| Matrix | Client-Server API(ルームへ投稿) | `MATRIX_HOMESERVER`、`MATRIX_ACCESS_TOKEN`、`MATRIX_ROOM_ID` | `matrix` | あり(`matrix.to` のリンク) | あり |
+| メール | SMTP(依存なしの自前のクライアント) | `SMTP_URL`、`MAIL_FROM`、`MAIL_TO` | `email` | なし | あり |
 | 汎用 Webhook | JSON を POST | `WORKLOG_WEBHOOK_URL`、`WORKLOG_WEBHOOK_SECRET` | `webhook` | なし | あり |
 | Confluence | ページを作る・更新する | `CONFLUENCE_*` | `confluence` | あり | なし |
 | esa | 記事を作る・更新する | `ESA_ACCESS_TOKEN`、`ESA_TEAM` | `esa` | あり | なし |
@@ -783,6 +825,23 @@ Bot API 2.0 で、トークルームに送ります。サービスアカウン�
 }
 ```
 
+### メール(SMTP)
+
+- 環境変数は `SMTP_URL`(`smtp://user:pass@host:587` は STARTTLS、`smtps://user:pass@host:465` は最初から TLS。ユーザー名とパスワードは URL エンコード)、`MAIL_FROM`、`MAIL_TO`(カンマ区切りで複数)です。`config.json` の `email.from` / `email.to`(文字列か配列)/ `email.subjectPrefix` でも設定でき、そちらを優先します。`WORKLOG_SMTP_SECURE=1` は `smtp://` でも最初から TLS(465 番は常にそう)、`WORKLOG_SMTP_INSECURE=1` は証明書を確かめません(手元のテスト用)。自己署名の CA は `NODE_EXTRA_CA_CERTS` で足せます。
+- 流れは、接続、EHLO(だめなら HELO)、STARTTLS(提示されていれば必ず使う)、AUTH PLAIN / LOGIN(認証情報があるとき)、MAIL FROM、RCPT TO(1 つでも宛先が断られたら送らない)、DATA です。
+- 認証情報があるのに TLS にならないときは、手元(`localhost` / `127.0.0.0/8` / `::1`)のサーバー以外には送りません(パスワードを平文で流さないため)。
+- 本文は text と HTML の両方で、常に base64 で送ります。件名は RFC 2047 で符号化し、CR / LF を含む値はヘッダーに入れません。From / To / Date / Message-ID は、送るときに足します(本文と同じ文字列に秘匿情報のマスキングをかけると、アドレスが `[EMAIL]` になってしまうため)。
+- URL のパスワードはサーバー側だけで使い、状態にはホストとポートだけを返します。
+- `email.notify` を `"session_end"` にすると、セッション終了の通知もメールで送ります(`subjectPrefix` が付きます)。
+
+### Matrix
+
+- 環境変数は `MATRIX_HOMESERVER`(`https` の URL。`http` は `localhost` / `127.0.0.1` / `::1` だけ)、`MATRIX_ACCESS_TOKEN`、`MATRIX_ROOM_ID`(`!` で始まるルーム ID。`#別名` は使えない。`matrix.roomId` でも可)です。`PUT /_matrix/client/v3/rooms/{roomId}/send/m.room.message/{txnId}` で投稿します。
+- `msgtype` は既定で `m.notice` です。自動の投稿向けの種類で、既定のプッシュ規則(`.m.rule.suppress_notices`)により、通知も未読の数も増えません。普通の発言と同じく未読に数えたいときは `matrix.msgtype` を `"m.text"` にします(それでもメンションにはなりません)。
+- `"m.mentions": {}` を付けて「誰にもメンションしない」と宣言します。本文に `@room` や表示名があっても、古い規則(`.m.rule.roomnotif` など)によるハイライトが起きません。古いクライアント向けに、本文の `@` も全角にします。
+- 429(`M_LIMIT_EXCEEDED`)のときは、待ってから同じ `txnId` で送り直します(サーバーが同じ送信として扱うので二重に投稿されません)。
+- 暗号化はしないので、暗号化したルームには送らないでください。アクセストークンはサーバー側だけで使います。
+
 ### 汎用 Webhook
 
 Zapier、n8n、Make などに、日報・週報とセッション終了の通知を JSON で POST します。そこから先の転送先は、Work Log では分かりません。
@@ -946,14 +1005,14 @@ node src/cli.js report [--week] [--date YYYY-MM-DD] [--tz <IANA名>] [--slack] [
 
 ### API
 
-- `GET /api/report`: プレビューです。`target`(`slack` / `discord` / `teams` / `googlechat` / `chatwork` / `mattermost` / `rocketchat` / `lineworks` / `webhook` / `confluence` / `esa` / `qiitateam` / `obsidian`)、`period`(`day` / `week`)、`date`(`YYYY-MM-DD`)、`tz` を指定します。送る内容(`preview`)、プレーンテキストにしたもの(`previewText`)、内容の `hash`、合計、送り先の状態を返します。
+- `GET /api/report`: プレビューです。`target`(`slack` / `discord` / `teams` / `googlechat` / `chatwork` / `mattermost` / `rocketchat` / `lineworks` / `matrix` / `email` / `webhook` / `confluence` / `esa` / `qiitateam` / `obsidian`)、`period`(`day` / `week`)、`date`(`YYYY-MM-DD`)、`tz` を指定します。送る内容(`preview`)、プレーンテキストにしたもの(`previewText`)、内容の `hash`、合計、送り先の状態を返します。
 - `POST /api/report`: `{ "target", "period", "date", "tz", "hash" }` を送ると、送信します。`hash` がプレビューのものと違うときは、送らずに 409 を返します。
 - `target` を省略すると `slack` です。
 - `/api/slack/report` は、`target=slack` と同じです(互換のために残しています)。
 
 ### セッション終了の通知
 
-`slack.notify`、`discord.notify`、`teams.notify`、`googlechat.notify`、`chatwork.notify`、`mattermost.notify`、`rocketchat.notify`、`lineworks.notify`、`webhook.notify`、`obsidian.notify` が `"session_end"` で、その送り先が使える状態のとき、サーバーの起動中に hooks の `SessionEnd` を受けたセッションを、1 件ずつ送ります。複数設定すれば、すべてに送ります。hooks 連携(`hooks install`)が必要です。
+`slack.notify`、`discord.notify`、`teams.notify`、`googlechat.notify`、`chatwork.notify`、`mattermost.notify`、`rocketchat.notify`、`lineworks.notify`、`matrix.notify`、`email.notify`、`webhook.notify`、`obsidian.notify` が `"session_end"` で、その送り先が使える状態のとき、サーバーの起動中に hooks の `SessionEnd` を受けたセッションを、1 件ずつ送ります。複数設定すれば、すべてに送ります。hooks 連携(`hooks install`)が必要です。
 
 - 内容: タイトル、プロジェクト、作業時間、コミット数、Codex の印、紐付いたタスクです。API 換算コストは `includeCost` を設定したときだけ載せます。Discord では、タイトルを embed の見出しにします。Teams では、タイトルを Adaptive Card の見出しにします。Google Chat では、タイトルを太字の 1 行目にします。汎用 Webhook には `type: "session_end"` の JSON を送り、Obsidian には、その日の「セッション.md」の末尾に 1 行足します。Confluence・esa・Qiita Team は、ページを作る送り先なので、通知は送りません。
 - 終了から 2 時間以内のものだけ送ります。サーバーの停止中に終わったセッションを、起動後にまとめて送ることはありません。
@@ -993,7 +1052,14 @@ Slack、Discord、Teams、Google Chat の API には、この開発環境から�
 - Rocket.Chat 8.8(Docker の `rocketchat/rocket.chat` と MongoDB 8.0、実サーバー): Incoming Webhook の投稿で `*太字*` やリストが描画されることを確認しました。こちらの投稿は `mentions=[]` で、bob の `userMentions` は 0 のままでした。対照の生の "@bob" は `mentions=['bob']` になりました。Incoming インテグレーションの作成には、メッセージの成りすまし(message-impersonate)権限を持つユーザー(例: `rocket.cat`)が必要です。
 - n8n 2.41.6(Docker の `n8nio/n8n`): Webhook トリガー(Raw Body 有効)と Code ノードのワークフローで、`X-WorkLog-Signature` を `"<時刻>.<本文>"` に対して検証しました。正しい鍵なら検証は成功し、誤った鍵なら失敗しました。日報の JSON の項目(`type`、`period`、`totals`、`sessions`)も受け取れました。
 - 実際の Mattermost の確認で見つかった不具合を直しました。タイトルを 60 文字に切ってからマスキングしていたため、トークンの一部(例: `ghp_abcd…`)がマスクされずに残ることがありました。マスキングしてから切るようにし(`src/mask.js` の `clipMasked`)、キャッシュのバージョンを上げてセッションを読み直すようにしました。
-- 未確認: Slack・Discord・Teams・Chatwork・LINE WORKS・Notion・Linear・Jira・Toggl・Clockify・Harvest・Confluence・esa・Qiita には、開発環境から接続できません。
+- メール(Docker の `axllent/mailpit` v1.31.4、2026-10-05): `report --email` を、STARTTLS + AUTH PLAIN(自前の CA の証明書を `NODE_EXTRA_CA_CERTS` で検証)、最初から TLS(`smtps://` と `WORKLOG_SMTP_SECURE=1`)、TLS も認証も無い平文、の 3 通りで送りました。Mailpit の API で、件名の復号、宛先 2 件、From、text と HTML の両方、日本語、伏せたトークン、HTML の逃がし、余計なヘッダー(Bcc など)が無いこと、URL エンコードしたユーザー名(`user%2Bx` → `user+x`)を確かめ、HTML は Chromium で表示して見ました。件名に CR/LF と "Bcc:" を入れてもヘッダーが増えないこと、長い日本語の件名の復号、セッション終了の通知(`subjectPrefix` 付き)、証明書を確かめられないときは送らないこと、STARTTLS の無いサーバーへ手元以外の IP ではパスワードを送らないこと、TLS 専用のポートへ平文でつなぐとタイムアウトのエラーになることも確かめました。
+- Matrix(Docker の `matrixdotorg/synapse` 1.162.0、`server_name=localhost`、既定のルーム v12): 送り手・bob・carol の 3 人のルームに、タイトルに "@room" と "@bob:localhost" を含む日報を送りました。bob の `/messages` で、`formatted_body`、空の `m.mentions`、本文の `@` が全角になっていることを確かめました。bob の `/sync` の `unread_notifications` と `/notifications` では、既定の `m.notice` は `notification_count` も `highlight_count` も増えず、`m.text` にすると `notification_count` だけが 1 増えました。対照として、`m.mentions` の無い同じ本文と本物のメンションではハイライトが増え、`m.mentions: {}` を付けると増えないことを確かめました。`rc_message` を厳しくして実際の 429 を起こし、同じ `txnId` で送り直して、8 件続けても二重にならないこと、間違ったトークン(401)と参加していないルーム(403)のエラー、セッション終了の通知も確かめました。
+- Redmine(`redmine:6` = 6.1.5)と Gitea(28.0.0): 課題の取得とコメントの投稿(「課題管理サービス連携」の「動作確認」)、Redmine の作業時間の記録(`work-log sync --redmine-time`。作成 201、更新 204、削除 204、消えた ID の更新 404 は作り直し、2 回目は何も作らない、途中で 422 で止まっても続きから、`spent_on` が `redmine.timeZone` の日付)を実際のサーバーで確認しました。
+- CalDAV(Radicale 3.8.1、Docker の `tomsquest/docker-radicale`、2026-10-05): `MKCALENDAR` で作ったカレンダーに `work-log sync --caldav` で、追加 3 件、2 回目は追加 0 件、タイトルの変更で更新 2 件、区間が消えたら削除 1 件。PROPFIND・REPORT と、Python の icalendar 7.3.0 で読んで確かめました。412 は 3 通りとも実物で起こして確かめました(カレンダー側で書き換えた予定の更新・削除、対応表を消した後の追加)。401(パスワード違い)と 409(無いカレンダー)の文面も確認しました。
+- 書き出し(2026-10-05): CSV を pandas の `read_csv`、`.xlsx` を openpyxl 3.1.5 と pandas の `read_excel` で読み、列・日時・数値が一致することを確かめました。LibreOffice 25.8.7.3 の headless 変換で、式の注入対策(`'` を付けた `=HYPERLINK(…)` が文字列のまま)と、`.xlsx` の `=` で始まるタイトルが文字列のままであることを確かめました。
+- Prometheus 3.15.0(Docker の `prom/prometheus`、`--network host`): targets が `up` になり、HTTP API で各指標が Work Log の `/api/sessions` と `/metrics` の値と一致すること、`"` と `\` を含むプロジェクト名のラベルが元の文字列に戻ること、`promtool check metrics` に警告・誤りが無いことを確かめました。
+- 実際のサーバーでの確認で見つけた不具合を直しました。(1) Redmine の作業時間: `project_id` に識別子を渡すと 422 になるため、識別子は `GET /projects/{識別子}.json` で数値の ID に直してから送るようにしました。(2) Redmine: 既定データには「既定」の作業分類が無く、`activity_id` を省くと 422 になるため、既定の作業分類を探し、無ければ `redmine.activityId` の設定を求めるようにしました。(3) Redmine の Textile: 記号が記法として解釈されて崩れたため、セルを `<notextile>` で囲むようにしました。(4) メール: text の部分の改行が CRLF になっていませんでした。(5) メール: 手元のサーバーの判定が `127.0.0.1` だけで、`127.0.0.0/8` の範囲を手元と扱っていませんでした。(6) Matrix: ルーム v12 の ID はサーバー名の部分が無い形(`!abc…`)で、これを受け付けていませんでした。
+- 未確認: Slack・Discord・Teams・Chatwork・LINE WORKS・Notion・Linear・Jira・Toggl・Clockify・Harvest・Confluence・esa・Qiita には、開発環境から接続できません。Jira の作業ログ(`--jira-worklog`)も偽のサーバーとテストでだけ確認しています。そのほか実物で未確認のものは、次のとおりです。メール: AUTH LOGIN しか提示しないサーバー・HELO しか知らないサーバー・宛先を断るサーバー、Gmail・Microsoft 365・SES などの実際のサービスと実際のメールソフトでの表示、SMTPUTF8(日本語のメールアドレス)、8BITMIME(本文は常に base64 で送るため、DATA の行頭の `.` の処理は本物のサーバーでは働く場面がありませんでした)。Matrix: Element など実際のクライアントでの表示、`matrix.org` など公開のホームサーバー、https のホームサーバー、暗号化されたルーム、サーバー名の付いた古い形のルーム ID。Redmine: 5.x 以前、プロジェクトごとに作業分類を変えている場合、コメントの長さの上限(255 文字に切り詰めて送ります)。Gitea: Forgejo。CalDAV: Nextcloud・iCloud・Fastmail の実物。書き出し: Microsoft Excel・Google スプレッドシート・Numbers での表示と取り込み。Prometheus: VictoriaMetrics・Grafana Agent など Prometheus 以外からの取得、OpenMetrics 形式での応答。
 
 送り先:
 
@@ -1028,7 +1094,7 @@ Slack、Discord、Teams、Google Chat の API には、この開発環境から�
 
 ## カレンダーと工数管理
 
-作業のセッションを、カレンダーアプリに取り込める `.ics` に書き出したり、Google カレンダー・Toggl Track・Clockify・Harvest に記録したりできます。どちらも任意です。記録先は `src/sync/index.js` の一覧にあり、1 項目足せば増やせます。
+作業のセッションを、カレンダーアプリに取り込める `.ics` や、表計算ソフト向けの CSV / Excel に書き出したり、Google カレンダー・Toggl Track・Clockify・Harvest・CalDAV・Redmine・Jira に記録したりできます。どちらも任意です。記録先は `src/sync/index.js` の一覧にあり、1 項目足せば増やせます。
 
 ### 予定の作り方
 
@@ -1056,13 +1122,16 @@ node src/cli.js ical [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--tz <IANA名>] [--o
 | Toggl Track | `--toggl` | `TOGGL_API_TOKEN` | `toggl` |
 | Clockify | `--clockify` | `CLOCKIFY_API_KEY` | `clockify` |
 | Harvest | `--harvest` | `HARVEST_ACCESS_TOKEN`、`HARVEST_ACCOUNT_ID` | `harvest` |
+| CalDAV | `--caldav` | `CALDAV_URL`、`CALDAV_USERNAME`、`CALDAV_PASSWORD` | `caldav` |
+| Redmine(作業時間) | `--redmine-time` | `REDMINE_URL`、`REDMINE_API_KEY` | `redmine` |
+| Jira(作業ログ) | `--jira-worklog` | `JIRA_BASE_URL`、`JIRA_EMAIL` + `JIRA_API_TOKEN`(または `JIRA_PAT`) | `jira` |
 
 - 対象は、終わったセッションだけです。
 - 画面では、何も選んでいないときの右側に、設定した記録先ごとに「この週を…に記録…」のボタンが出ます。押すと、追加・更新・削除の一覧を確認ダイアログに見せ、「記録する」を押したときだけ送ります。プレビューの後に内容が変わったときは、送らずに 409 を返します。
 - CLI は、cron から使えるよう、確認なしで送ります。`--dry-run` は一覧を表示するだけです。複数の記録先を付けると、順に送ります。
 
 ```sh
-node src/cli.js sync [--week] [--date YYYY-MM-DD] [--from … --to …] [--tz <IANA名>] --gcal|--toggl|--clockify|--harvest [--dry-run]
+node src/cli.js sync [--week] [--date YYYY-MM-DD] [--from … --to …] [--tz <IANA名>] --gcal|--toggl|--clockify|--harvest|--caldav|--redmine-time|--jira-worklog [--dry-run]
 ```
 
 - 期間を省くと今日(`--week` で、`--date`(省略すると今日)を含む週)です。画面と API の既定は過去 7 日(最大 93 日)です。
@@ -1070,9 +1139,10 @@ node src/cli.js sync [--week] [--date YYYY-MM-DD] [--from … --to …] [--tz <I
 
 #### 重複させない仕組みと削除の規則
 
-- 送ったものは、キャッシュの `sync-<name>.json`(`sync-gcal.json` / `sync-toggl.json` / `sync-clockify.json` / `sync-harvest.json`)に、予定のキー → 相手側の ID と内容の hash として記録します。何度実行しても重複しません。
+- 送ったものは、キャッシュの `sync-<name>.json`(`sync-gcal.json` / `sync-toggl.json` / `sync-clockify.json` / `sync-harvest.json` / `sync-caldav.json` / `sync-redmine.json` / `sync-jira.json`)に、予定のキー → 相手側の ID と内容の hash として記録します。何度実行しても重複しません。
 - 内容が変わった予定(区間が伸びた、タイトルが変わった)は更新します。相手側で消されていた(404 / 410)ときは、作り直します。
 - 削除するのは、この対応表にある(Work Log が作った)もので、手元の区間が無くなったものだけです。手で作った予定・記録には触りません。
+- セッションが課題との紐付けを失った(Redmine・Jira)ときは、すでに送った記録は相手側に残し、削除しません。紐付けが別の課題に変わった Jira は、古い課題の記録を消して作り直します。
 - セッションごと見当たらないもの(Claude Code が古いログを自動で消した可能性があります)は、終わってから `KEEP_MISSING_AFTER_DAYS`(20 日)以内のものだけ削除します。それより古いものは残します。
 - 1 件ずつ順に送り、送れたものから対応表に記録します。途中で失敗しても、次はその続きからになります。同じ記録先への送信は 1 本ずつで、同時に押されても二重に作りません。
 - 通信は、リダイレクトを追わず、1 回のリクエストは 10 秒でタイムアウトします。429 のときは待ち時間を添えてエラーにします。
@@ -1089,7 +1159,10 @@ node src/cli.js sync [--week] [--date YYYY-MM-DD] [--from … --to …] [--tz <I
   "gcal": { "calendarId": "<記録専用のカレンダーの ID>", "colorId": "9", "mergeSegments": false, "minMinutes": 1 },
   "toggl": { "workspaceId": 123456, "projects": { "work-log": 7890 } },
   "clockify": { "workspaceId": "<ID>", "projects": { "work-log": "<プロジェクト ID>" }, "tagIds": ["<タグ ID>"], "billable": false, "baseUrl": "https://api.clockify.me/api/v1" },
-  "harvest": { "projectId": 1, "taskId": 2, "projects": { "work-log": { "projectId": 3, "taskId": 4 } }, "timeZone": "Asia/Tokyo" }
+  "harvest": { "projectId": 1, "taskId": 2, "projects": { "work-log": { "projectId": 3, "taskId": 4 } }, "timeZone": "Asia/Tokyo" },
+  "caldav": { "url": "http://localhost:5232/user/work-log/" },
+  "redmine": { "projects": { "work-log": "wlb" }, "projectId": 1, "activityId": 9, "timeZone": "Asia/Tokyo" },
+  "jira": { "apiVersion": 3 }
 }
 ```
 
@@ -1097,7 +1170,51 @@ node src/cli.js sync [--week] [--date YYYY-MM-DD] [--from … --to …] [--tz <I
 - Toggl Track: `workspaceId`(省くと既定のワークスペース)、`projects`(Work Log のプロジェクト名 → Toggl のプロジェクト ID)。タグは `work-log` とプロジェクト名を付けます。続けて送るときは、利用制限を避けて間隔を空けます。
 - Clockify: `workspaceId`(省くと `GET /user` の `activeWorkspace`)、`projects`(プロジェクト名 → ID)、`tagIds`(ID の配列)、`billable`、`baseUrl`(EU などデータ保存地域を選んだワークスペースの API の場所。`WORKLOG_CLOCKIFY_API` が優先)。
 - Harvest: `projectId` と `taskId`(必須)。`projects` に `{ "<プロジェクト名>": { "projectId", "taskId" } }` を書くと、プロジェクトごとに変えられます。時間は区間の長さを 0.01 時間に丸めて送ります。日付は `timeZone`(無ければこのマシンのタイムゾーン)の日付です。記録先が決まらない区間は、プレビューに「記録先の決まらないもの n 件」と出て、送りません。
+- CalDAV・Redmine・Jira は、下の「CalDAV」「Redmine(作業時間)と Jira(作業ログ)」を参照してください。
 - 認証情報はサーバー側だけで使い、ブラウザには渡しません。
+
+#### CalDAV
+
+- 1 つの予定は、カレンダーのコレクションの中の 1 つのファイル `<予定のキー>.ics` です(VEVENT 1 つ。中身と UID は `.ics` の書き出しと同じ)。追加は `PUT`(`If-None-Match: *`)、更新は `PUT`(`If-Match: <ETag>`。ETag が返らなければ条件なし)、削除は `DELETE`(`If-Match`)で、応答の ETag を `sync-caldav.json` に残します。
+- 412(条件が合わない)のとき: 追加で起きたら同じ名前のものが既にあり(対応表を消した、別の PC から記録した)、更新・削除で起きたらカレンダーのアプリで書き換えられたか消されています。どちらも Work Log の作った予定なので、今の ETag を `GET` で取り直し、あれば上書き(削除)、無ければ作り直します。取り直した後でもまた 412 なら、止めて伝えます(同時に書き換えられています)。
+- `CALDAV_URL`(`caldav.url` でも可)はカレンダーのコレクションの URL で、`https` だけです(`localhost` / `127.0.0.1` は `http` も可)。リダイレクトは追わない(認証情報を別の場所へ送らないため)ので、最終的な URL を書きます。記録専用のカレンダーを作っておくことをおすすめします。例:
+  - Nextcloud: `https://<host>/remote.php/dav/calendars/<ユーザー>/<カレンダー>/`(アプリパスワード推奨)
+  - iCloud: `https://pNN-caldav.icloud.com/<数字の ID>/calendars/<カレンダーの ID>/`(Apple ID とアプリ用パスワード。URL は `caldav.icloud.com` への PROPFIND で `current-user-principal` → `calendar-home-set` をたどって調べます)
+  - Fastmail: `https://caldav.fastmail.com/dav/calendars/user/<メールアドレス>/<カレンダーの ID>/`(アプリパスワード)
+  - Radicale: `http://localhost:5232/<ユーザー>/<カレンダー>/`
+- Radicale などで直接作るときは `MKCALENDAR` を使います。
+
+```sh
+curl -u user:pass -X MKCALENDAR http://localhost:5232/user/work-log/
+```
+
+#### Redmine(作業時間)と Jira(作業ログ)
+
+- Redmine(`--redmine-time`): `POST /time_entries.json` で作業時間を記録します。記録先は、セッションに Redmine の課題が紐付いていればその課題、無ければ `redmine.projects`(`{ "<Work Log のプロジェクト名>": Redmine のプロジェクトの ID か識別子 }`)か `redmine.projectId` で、どれも無ければ記録しません。識別子は ID に直してから送ります。作業分類は `redmine.activityId`(無ければ Redmine の既定の作業分類。既定が無ければ設定を求めます)。時間は 0.01 時間に丸め、コメントは 255 文字に切り詰め、日付は `redmine.timeZone`(無ければこのマシンのタイムゾーン)の日付です。記録はこの鍵の利用者のものになります。
+- Jira(`--jira-worklog`): Jira の課題に紐付いたセッションだけを、その課題の作業ログ(`/rest/api/3/issue/{key}/worklog`。Server / Data Center は v2)に記録します。認証と接続先は課題の取得と同じで、API の版は `jira.apiVersion`(2 / 3)で変えられます。記録の ID は `<課題キー>:<作業ログの ID>` です。残り見積もりは Jira の既定(`adjustEstimate=auto`)のとおりに減ります。
+- Backlog の実績時間は、記録先にしていません。Backlog の `actualHours` は課題に 1 つの数値しか無く、記録ごとの ID が無いためです。人の入力と区別できず、足し引きでは途中で止まったときに二重に数え、合計で上書きすると人の入力を消します(`src/sync/index.js` のコメント)。
+
+### 表計算ソフト向けの書き出し(CSV / Excel)
+
+外部には何も送りません。1 行は、作業の区間 1 つ(既定)か、セッション 1 つです。
+
+```sh
+node src/cli.js export --csv|--xlsx [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--tz <IANA名>] [--per session] [--out file]
+```
+
+- 期間を省くと過去 30 日です。CSV は標準出力へ、`.xlsx` は `--out` か、端末でない標準出力へ書きます。API は `GET /api/export.csv` / `GET /api/export.xlsx`(`from`、`to`、`tz`、`unit=segment|session`)で、画面にもサイドバーに「CSV」「Excel(.xlsx)」のリンクが出ます。
+- 列は、日付・開始・終了・作業時間(分)・プロジェクト・ツール・タイトル・タスク・コミット数・モデル・トークン数・API 換算(USD)・セッション ID です。文字列は秘匿情報を伏せてから書きます。
+- 区間ごとのときは、トークンとコストを 1 時間ごとの集計から、その 1 時間と最も重なる区間に入れます。コミットは時刻の入る区間に入れます。区間の合計はセッションの合計と一致します。
+- CSV は UTF-8(BOM 付き)・行末 CRLF・RFC 4180 の引用です。式の注入対策として、文字列のセルが `=` `+` `-` `@` タブ CR で始まるときは先頭に `'` を付けます(数値のセルには付けません)。`.xlsx` の文字列はインライン文字列のセルなので、`'` は付けずそのまま書きます。
+- `.xlsx` は依存なしの自前の書き出しです(シート 1 枚。見出しは太字で固定、日付は日付のセル)。
+
+### Prometheus の指標
+
+`WORKLOG_METRICS=1` か `config.json` の `metrics.enabled` が `true` のときだけ、`GET /metrics`(`text/plain; version=0.0.4`)で返します(無効なときは 404)。サーバーは 127.0.0.1 だけで待ち受け、Host が `127.0.0.1` / `localhost` のときだけ応じます。
+
+- 指標: `work_log_active_seconds_total`・`work_log_sessions_total`・`work_log_commits_total`(`project` / `tool` ごと)、`work_log_api_equivalent_usd_total`(`project` / `tool` / `model` ごと)、`work_log_tokens_total`(`model` / `type` ごと)、`work_log_in_progress_sessions`(gauge)です。ラベルの値は秘匿情報を伏せてからエスケープします。
+- 値は手元に残っているログ全体の累計です。Claude Code は古いログを自動で消す(既定で 30 日)ので、消えた分だけ counter が減ることがあります(Prometheus は減少をリセットとして扱うので、`rate()` / `increase()` はそのまま使えます)。
+- Docker の中の Prometheus から取るときは、`--network host` で動かし、targets に `127.0.0.1:<ポート>` を書きます(ブリッジのネットワークからは届きません)。
 
 ## 拡張のしかた
 
@@ -1132,16 +1249,16 @@ node src/cli.js sync [--week] [--date YYYY-MM-DD] [--from … --to …] [--tz <I
 - `config.json`: タスク管理連携の設定です(任意、利用者が作成)。形式は「タスク管理連携」の「設定」を参照してください。
 - `links.json`: 詳細パネルから手で付け外ししたタスクです。
 - `github.json`: GitHub の issue / PR の取得結果(ETag を含む)です。形式と再確認の間隔は「タスク管理連携」の「課題管理サービス連携」を参照してください。
-- `tracker-<name>.json`: GitLab / Linear / Jira / Backlog / Notion の課題の取得結果です(`tracker-gitlab.json`、`tracker-notion.json` など。GitLab は ETag を含む)。再確認の間隔は GitHub と同じです。
-- `slack-notified.json`: セッション終了の通知の記録です(Slack / Discord / Teams / Google Chat / Chatwork / Mattermost / Rocket.Chat / LINE WORKS / 汎用 Webhook / Obsidian)。セッション終了の通知を送ったセッションを、送り先ごとに記録します(新しい 500 件まで)。形式は「送り先連携」の「セッション終了の通知」を参照してください。
+- `tracker-<name>.json`: GitLab / Linear / Jira / Backlog / Notion / Redmine / Gitea の課題の取得結果です(`tracker-gitlab.json`、`tracker-redmine.json` など。GitLab は ETag を含む)。再確認の間隔は GitHub と同じです。
+- `slack-notified.json`: セッション終了の通知の記録です(Slack / Discord / Teams / Google Chat / Chatwork / Mattermost / Rocket.Chat / LINE WORKS / Matrix / メール / 汎用 Webhook / Obsidian)。セッション終了の通知を送ったセッションを、送り先ごとに記録します(新しい 500 件まで)。形式は「送り先連携」の「セッション終了の通知」を参照してください。
 - `confluence-pages.json` / `esa-pages.json` / `qiitateam-pages.json`: ページを作る送り先で、期間(日・週)と相手側のページ(記事)の対応です。同じ期間を送り直すと、新しく作らず、ここにあるページを更新します。消すと、次は新しいページを作ります。形式は「送り先連携」の「ドキュメントへの保存」を参照してください。
-- `sync-<name>.json`: カレンダー・工数管理サービスへの記録の対応表です(`sync-gcal.json`、`sync-toggl.json`、`sync-clockify.json`、`sync-harvest.json`)。予定のキーと、相手側の ID・内容の hash を覚えます。重複させない、消えた区間を削除する、ために使います。形式は「カレンダーと工数管理」を参照してください。
+- `sync-<name>.json`: カレンダー・工数管理サービスへの記録の対応表です(`sync-gcal.json`、`sync-toggl.json`、`sync-clockify.json`、`sync-harvest.json`、`sync-caldav.json`、`sync-redmine.json`、`sync-jira.json`)。予定のキーと、相手側の ID(CalDAV は ETag も)・内容の hash を覚えます。重複させない、消えた区間を削除する、ために使います。形式は「カレンダーと工数管理」を参照してください。
 
 ## ディレクトリ構成
 
 ```
 src/
-  cli.js         コマンドラインの入口 (serve / scan / summarize / hooks / hook / report / ical / sync)
+  cli.js         コマンドラインの入口 (serve / scan / summarize / hooks / hook / report / ical / export / sync)
   server.js      HTTP サーバー、API、ファイル監視、更新通知、フックからの通知の受け口
   store.js       ログの収集、JSON キャッシュ、要約の管理、セッション状態の判定、送り先・記録先の呼び出し
   paths.js       ログとキャッシュの場所
@@ -1155,6 +1272,8 @@ src/
   trackers/      課題管理サービス連携
     base.js        共通部分。キャッシュ、再確認の間隔、API 制限中の停止、同時取得数、タイムアウト
     providers.js   GitLab / Linear / Jira / Backlog / Notion の取得とコメント投稿
+    redmine.js     Redmine の課題の取得と注記の投稿(Markdown / Textile)
+    gitea.js       Gitea / Forgejo の issue・プルリクエストの取得とコメントの投稿
     index.js       サービスの一覧、設定の反映、`ABC-123` 形式の振り分け、タスクへの課題情報の付与
   destinations.js 送り先の一覧(登録簿)。送り先を足すときは、ここに 1 項目足す
   slack.js       Slack への送信。Incoming Webhook と Bot トークン(chat.postMessage)に対応
@@ -1165,6 +1284,8 @@ src/
   mattermost.js  Mattermost への送信。Incoming Webhook に対応
   rocketchat.js  Rocket.Chat への送信。Incoming Webhook に対応
   lineworks.js   LINE WORKS への送信。Bot API 2.0(サービスアカウントの JWT でトークンを取る)
+  matrix.js      Matrix への送信。Client-Server API(既定は m.notice、m.mentions を空にする)
+  email.js       メール(SMTP)での送信。依存なしの SMTP クライアント(STARTTLS / TLS、AUTH PLAIN / LOGIN)
   webhook.js     汎用 Webhook への送信。JSON を POST し、鍵があれば HMAC-SHA256 の署名を付ける
   confluence.js  Confluence Cloud へのページの保存(REST v2)。同じ期間は同じページを更新
   esa.js         esa への記事の保存。同じ期間は同じ記事を更新
@@ -1172,8 +1293,11 @@ src/
   obsidian.js    Obsidian の Vault へのノートの書き込み(ネットワークは使わない)
   docreport.js   日報・週報をページ形式(Markdown / Confluence の storage format)にする
   docutil.js     ページを作る送り先の共通部品(期間とページの対応 PageMap、タイムアウト付きの fetch、作成か更新か)
-  report.js      日報・週報の集計と、送り先ごとの本文(Slack・Discord・Teams・Google Chat・Chatwork・Mattermost・Rocket.Chat・LINE WORKS・Webhook・ターミナル用)、セッション終了の通知の本文
+  report.js      日報・週報の集計と、送り先ごとの本文(Slack・Discord・Teams・Google Chat・Chatwork・Mattermost・Rocket.Chat・LINE WORKS・Matrix・メール・Webhook・ターミナル用)、セッション終了の通知の本文
   ical.js        カレンダー(.ics、RFC 5545)の書き出し
+  export.js      表計算ソフト向けの書き出し(CSV と .xlsx。1 行 = 区間かセッション。式の注入対策)
+  xlsx.js        依存なしの .xlsx(Office Open XML)の書き出し(ZIP も自前)
+  metrics.js     Prometheus のテキスト形式の指標(GET /metrics)
   sync/          カレンダー・工数管理サービスへの記録
     index.js       記録先の一覧(登録簿)、下見(追加・更新・削除の一覧)、記録、対応表(sync-<name>.json)。記録先を足すときは、ここに 1 項目足す
     base.js        共通部分。設定、HTTP の送り方(10 秒で打ち切り・リダイレクトしない・429 の扱い)、送る間隔
@@ -1182,6 +1306,9 @@ src/
     toggl.js       Toggl Track(API v9)
     clockify.js    Clockify(API v1)
     harvest.js     Harvest(API v2)
+    caldav.js      CalDAV(RFC 4791。ETag と 412 の扱い)
+    redmine.js     Redmine の作業時間(time entries)
+    jira.js        Jira の作業ログ(worklog)
   filter.js      セッション一覧の絞り込み(期間・プロジェクト・タグ・ツール・タスク・キーワード)
   parser.js      JSONL を 1 セッションの集計レコードに変換
   sources.js     ログの取り込み元の一覧(登録簿)。取り込み元を足すときは、ここに 1 項目足す。Codex を含む
@@ -1203,7 +1330,7 @@ test/            テスト (node --test。送り先・記録先・取り込み�
   dest-helpers.js  送り先のテストの共通部品
   doc-helpers.js   ドキュメント系の送り先のテストの共通部品
   *.test.js      parser / codex / gemini / copilot / aider / cursor / pricing / git / tasks / trackers / github / notion / hooks / store /
-                 slack / discord / teams / googlechat / chatwork / mattermost / rocketchat / lineworks / webhook /
-                 confluence / esa / qiitateam / obsidian / docreport / ical / sync
+                 slack / discord / teams / googlechat / chatwork / mattermost / rocketchat / lineworks / matrix / email / webhook /
+                 confluence / esa / qiitateam / obsidian / docreport / ical / export / metrics / caldav / redmine-gitea / sync
 docs/            ドキュメント (requirements.md)
 ```
