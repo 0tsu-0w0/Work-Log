@@ -42,7 +42,8 @@ export function inferComponents(changedFiles = [], max = 4) {
 export function heuristicSummary(session) {
   const parts = [];
   if (session.firstPrompt) {
-    const p = session.firstPrompt.replace(/\s+/g, ' ').trim();
+    // 依頼は Markdown で書かれることが多いので、強調・コード・見出しの記号を落として地の文にする
+    const p = session.firstPrompt.replace(/\*\*|__|`+/g, '').replace(/^\s*#{1,6}\s+/gm, '').replace(/\s+/g, ' ').trim();
     parts.push(`依頼: ${clipMasked(p, 140)}`);
   }
   const acts = [];

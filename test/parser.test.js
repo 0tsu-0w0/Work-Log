@@ -117,3 +117,8 @@ test('タイトルは伏せてから切り詰める(途中で切れたトーク�
   assert.match(s.title, /\[GITHUB_TOKEN\]/);
   assert.doesNotMatch(heuristicSummary({ ...s, firstPrompt: prompt.repeat(3) }).summary || '', /ghp_/);
 });
+
+test('自動の要約では、依頼の Markdown の記号を落とす', () => {
+  const r = heuristicSummary({ firstPrompt: '## 目的\n**作業履歴**を `~/.claude` から集める', filesChanged: [], commits: 0, toolCounts: {} });
+  assert.match(r.summary, /依頼: 目的 作業履歴を ~\/\.claude から集める/);
+});
