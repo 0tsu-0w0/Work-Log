@@ -20,8 +20,10 @@ export class SyncClient {
     this.setConfig(config);
   }
 
-  setConfig(cfg = {}) {
+  // all: config.json 全体(使う記録先だけが読む)
+  setConfig(cfg = {}, all = {}) {
     this.cfg = cfg && typeof cfg === 'object' && !Array.isArray(cfg) ? cfg : {};
+    this.all = all && typeof all === 'object' ? all : {};
   }
 
   // 以下はサービスごとに実装する
@@ -90,7 +92,9 @@ export class SyncClient {
       throw Object.assign(new Error(`${this.label} の API の利用制限に達しました(${res.headers.get('retry-after') || '少し'}秒後に再試行してください)`), { status: 429, retryAfter: res.headers.get('retry-after') });
     }
     if (!res.ok) {
-      const detail = json ? json.error?.message || json.error_description || json.error || json.message || '' : text;
+      // Redmine は { errors: ["…"] }、Jira は { errorMessages: […], errors: { 項目: "…" } } で理由を返す
+      const list = (v) => (Array.isArray(v) ? v.join(' / ') : v && typeof v === 'object' ? Object.values(v).join(' / ') : '');
+      const detail = json ? json.error?.message || json.error_description || json.error || json.message || list(json.errorMessages) || list(json.errors) || '' : text;
       throw Object.assign(new Error(`${this.label} ${res.status}: ${String(typeof detail === 'string' ? detail : JSON.stringify(detail)).slice(0, 200)}`), { status: res.status, body: json });
     }
     return json;

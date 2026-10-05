@@ -55,6 +55,8 @@ export function buildEntries(sessions, { from = -Infinity, to = Infinity, mergeS
         project: s.project || '',
         tool: s.tool || 'claude',
         description: describe(s, p),
+        // 課題に紐付けて記録する記録先(Redmine の作業時間・Jira の作業ログ)用。store が解決したタスクがあるときだけ
+        links: (s.linkedTasks || []).filter((t) => t.provider).map((t) => ({ provider: t.provider, id: t.id, number: t.number ?? null, repo: t.repo || null })),
       }));
     }
   }

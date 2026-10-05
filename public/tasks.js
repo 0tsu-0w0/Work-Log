@@ -23,7 +23,7 @@ export function notePosted(taskId, url) {
   posted.set(taskId, url);
 }
 
-export const PROVIDER_LABEL = { github: 'GitHub', gitlab: 'GitLab', linear: 'Linear', jira: 'Jira', backlog: 'Backlog', notion: 'Notion' };
+export const PROVIDER_LABEL = { github: 'GitHub', gitlab: 'GitLab', linear: 'Linear', jira: 'Jira', backlog: 'Backlog', notion: 'Notion', redmine: 'Redmine', gitea: 'Gitea' };
 const CATEGORY_TITLE = { open: '未着手', in_progress: '進行中', done: '完了', canceled: '中止・見送り' };
 
 // 課題の状態。サービスごとの状態名(stateLabel)を、4つの分類(stateCategory)の色で示す。色だけに頼らず文字でも示す

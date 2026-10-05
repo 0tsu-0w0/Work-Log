@@ -5,7 +5,7 @@
 //   work-log summarize [ID]  LLMで要約(IDを省略すると未要約のものをすべて)
 //   work-log report [--week] [--date YYYY-MM-DD] [--slack] [--discord] [--teams] [--google-chat] …  日報・週報を表示(送り先のオプションで送る。一覧は destinations.js)
 //   work-log ical [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--out file]  カレンダー(.ics)を書き出す(省くと過去30日、標準出力へ)
-//   work-log sync [--week] [--date YYYY-MM-DD] [--from … --to …] --gcal|--toggl|--clockify|--harvest [--dry-run]
+//   work-log sync [--week] [--date YYYY-MM-DD] [--from … --to …] --gcal|--toggl|--clockify|--harvest|--redmine-time|--jira-worklog [--dry-run]
 //                            終わったセッションをカレンダー・工数管理サービスに記録する(確認なし。一覧は sync/index.js)
 //   work-log hooks install   Claude Code の hooks に登録(uninstall / status も可)
 //   work-log hook            hooks から呼ばれる受け口(手動では使わない)

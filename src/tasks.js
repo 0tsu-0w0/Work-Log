@@ -8,6 +8,7 @@
 //   !123, group/project!123      GitLab のマージリクエスト
 //   https://github.com/o/r/issues/123, …/pull/123, https://gitlab.com/g/p/-/issues/123, …/-/merge_requests/123,
 //   https://linear.app/x/issue/ABC-123/…, https://x.atlassian.net/browse/ABC-123, https://x.backlog.jp/view/ABC-123
+//   https://redmine.example.com/issues/123, https://git.example.com/owner/repo/issues/12(Redmine / Gitea。設定した接続先のものだけ)
 //   ブランチ名 123-fix-bug, feature/123-…, fix/ABC-123-…
 
 // キー形式に見えるが、タスクではないことが多いもの(規格名・モデル名など)
@@ -24,6 +25,9 @@ const BACKLOG_URL_RE = /https?:\/\/([\w-]+\.backlog(?:tool)?\.(?:jp|com))\/view\
 const GITLAB_URL_RE = /https?:\/\/([\w.-]+(?::\d+)?)\/((?:[\w.-]+\/)+[\w.-]+)\/-\/(issues|merge_requests)\/(\d+)/g;
 // Notion のページURL。末尾(または ?p=)の32桁の16進数がページID。その前の "Fix-login-" はタイトルの一部
 const NOTION_URL_RE = /https?:\/\/(?:www\.)?(?:notion\.so|[\w-]+\.notion\.site)\/[^\s)>\]"']*/gi;
+// GitHub・GitLab 以外の課題のURL(Redmine の …/issues/123、Gitea / Forgejo の …/owner/repo/issues/12 や /pulls/12)。
+// どのサービスのものかはここでは決めず、resolveRef で設定した接続先(trackers)と照らし合わせる。合わなければ捨てる
+const ISSUE_URL_RE = /https?:\/\/[\w.-]+(?::\d+)?(?:\/[\w.~%-]+)*\/(?:issues|pulls)\/\d{1,9}(?![\w/-])/g;
 const MR_REF_RE = /(?<![\w&/!])(?:([\w.-]+(?:\/[\w.-]+)+))?!(\d{1,6})(?![\w])/g;
 
 export function normalizeConfig(cfg = {}) {
@@ -60,6 +64,11 @@ export function refsFromText(text, source, cfg, map = new Map()) {
   }
   for (const m of body.matchAll(BACKLOG_URL_RE)) addRef(map, { id: m[2], kind: 'key', url: `https://${m[1]}/view/${m[2]}` }, source);
   for (const m of body.matchAll(JIRA_URL_RE)) if (!/linear\.app|backlog/.test(m[1])) addRef(map, { id: m[2], kind: 'key', url: `${m[1]}/browse/${m[2]}` }, source);
+  for (const m of body.matchAll(ISSUE_URL_RE)) {
+    const host = m[0].split('/')[2].toLowerCase();
+    if (host === 'github.com' || m[0].includes('/-/')) continue; // GitHub と GitLab は上と下で拾う
+    addRef(map, { id: m[0], kind: 'url', url: m[0] }, source);
+  }
   if (cfg.github) {
     for (const m of body.matchAll(GH_URL_RE)) addRef(map, { id: `${m[1]}#${m[2]}`, kind: 'github', repo: m[1], number: Number(m[2]), host: 'github.com', url: m[0] }, source);
     for (const m of body.matchAll(GITLAB_URL_RE)) {
@@ -124,12 +133,24 @@ export function notionRefOf(url) {
 // リポジトリの番号("#123" / "!123")はセッションのリポジトリ(repoInfo: { host, path })のものとして扱い、
 // どのサービスの課題か(provider)とリンク先を決める。GitLab 以外の "!123" は意味が無いので null を返す。
 // trackers を渡すと、キー形式(ABC-123)の振り分けと、GitLab のホストの判定にそれを使う
-export function resolveRef(ref, { repo, repoInfo, cfg, trackers } = {}) {
+// Redmine の "#123" と Gitea の "owner/repo#12" の決め方は trackers/index.js の先頭を参照。project はセッションのプロジェクト名
+export function resolveRef(ref, { repo, repoInfo, cfg, trackers, project } = {}) {
   const r = { ...ref };
   const info = repoInfo || (repo ? { host: 'github.com', path: repo } : null);
+  if (r.kind === 'url') {
+    const hit = trackers?.urlRef(r.url);
+    return hit ? { ...r, ...hit } : null;
+  }
   if (r.kind === 'github') {
+    if (!r.repo && !r.mr && trackers?.redmineHashRef(project, info)) return { ...r, provider: 'redmine', ...trackers.redmineRef(r.number) };
     if (!r.repo && info) [r.repo, r.host] = [info.path, info.host];
-    if (r.repo && !r.host) r.host = info && info.path === r.repo ? info.host : 'github.com';
+    if (r.repo && !r.host) r.host = info && info.path === r.repo ? info.host : trackers?.get('gitea')?.hasRepo(r.repo) ? trackers.get('gitea').host() : 'github.com';
+    if (r.repo && trackers?.isGiteaHost(r.host)) {
+      if (r.mr) return null;
+      const gitea = trackers.get('gitea');
+      Object.assign(r, { provider: 'gitea', id: `${r.repo}#${r.number}`, url: r.url || gitea.issueUrl(r.repo, r.number), label: `${r.repo.split('/').pop()}#${r.number}` });
+      return r;
+    }
     const gitlabHost = r.host && r.host !== 'github.com' && (trackers ? trackers.isGitLabHost(r.host) : /(^|\.)gitlab\./.test(r.host));
     if (r.mr && r.repo && !gitlabHost) return null;
     if (r.repo) {
@@ -148,6 +169,8 @@ export function resolveRef(ref, { repo, repoInfo, cfg, trackers } = {}) {
   }
   if (r.kind === 'key') {
     r.provider = trackers?.keyProvider(r) || null;
+    // Redmine の "RM-123" は URL や "#123" と同じ課題としてまとめられるよう、ID をそろえる(表示はキーのまま)
+    if (r.provider === 'redmine') return { ...r, ...trackers.redmineRef(Number(r.id.split('-').pop())), label: r.id };
     if (!r.url && r.provider) r.url = trackers.keyUrl(r.provider, r.id);
     if (!r.url && cfg) {
       const tpl = cfg.urls[r.id.split('-')[0]] || cfg.keyUrl;

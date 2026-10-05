@@ -1,6 +1,7 @@
 // 作業のセッションをカレンダー・工数管理サービスに記録する。記録先を足すときは、SYNCS に1行足す。
 //   name: config.json のキー・API の target・対応表のファイル名 / label: 画面の表示名 / flag: CLI のオプション / env: 主な環境変数
-//   Client: status() / setConfig() / payload(entry) / create(entry) → ID / update(id, entry) / remove(id) を持つクラス(base.js)
+//   Client: status() / setConfig() / payload(entry) / create(entry) → ID / update(id, entry)(新しい ID を返してもよい) / remove(id) を持つクラス(base.js)
+//   usesTasks: true の記録先には、セッションに紐付いた課題(entry.links)を渡す(store.sync が解決する)
 // 流れ: plan() で「追加・更新・削除」の一覧と hash を作って見せ、apply() で同じ hash のときだけ送る。
 // 送ったものは <cacheDir>/sync-<name>.json(予定のキー → 相手側の ID と内容の hash)に記録し、何度実行しても重複させない。
 // 削除するのは、この対応表にある(= Work Log が作った)もので、手元の区間が無くなったものだけ。
@@ -11,6 +12,8 @@ import { GoogleCalendar } from './gcal.js';
 import { Toggl } from './toggl.js';
 import { Clockify } from './clockify.js';
 import { Harvest } from './harvest.js';
+import { RedmineTime } from './redmine.js';
+import { JiraWorklog } from './jira.js';
 import { buildEntries, allKeys } from './entries.js';
 import { validTimeZone } from '../report.js';
 
@@ -19,6 +22,10 @@ export const SYNCS = [
   { name: 'toggl', label: 'Toggl Track', flag: '--toggl', env: 'TOGGL_API_TOKEN', Client: Toggl },
   { name: 'clockify', label: 'Clockify', flag: '--clockify', env: 'CLOCKIFY_API_KEY', Client: Clockify },
   { name: 'harvest', label: 'Harvest', flag: '--harvest', env: 'HARVEST_ACCESS_TOKEN・HARVEST_ACCOUNT_ID', Client: Harvest },
+  { name: 'redmine', label: 'Redmine(作業時間)', flag: '--redmine-time', env: 'REDMINE_URL・REDMINE_API_KEY', Client: RedmineTime, usesTasks: true },
+  { name: 'jira', label: 'Jira(作業ログ)', flag: '--jira-worklog', env: 'JIRA_BASE_URL・JIRA_EMAIL・JIRA_API_TOKEN(または JIRA_PAT)', Client: JiraWorklog, usesTasks: true },
+  // Backlog の実績時間(actualHours)は課題に1つの数値しか無く、記録ごとの ID が無い。人の入力と区別できず、
+  // 足し引きでは途中で止まったときに二重に数え、合計で上書きすると人の入力を消すため、記録先にしていない
 ];
 
 export const SYNC_BY_NAME = Object.fromEntries(SYNCS.map((s) => [s.name, s]));
@@ -48,9 +55,14 @@ export class Syncs {
     this.locks = new Map();
   }
 
-  // config.json 全体を受け取り、記録先ごとの部分(gcal / toggl / clockify / harvest)を渡す
+  // config.json 全体を受け取り、記録先ごとの部分(gcal / toggl / clockify / harvest / redmine / jira)を渡す。
+  // 2つめの引数は config.json 全体(Jira の接続先 tasks.jira.baseUrl のように、課題管理の設定を使う記録先のため)
   setConfig(json = {}) {
-    for (const s of SYNCS) this.clients[s.name].setConfig(json?.[s.name] || {});
+    for (const s of SYNCS) this.clients[s.name].setConfig(json?.[s.name] || {}, json || {});
+  }
+
+  usesTasks(name) {
+    return Boolean(SYNC_BY_NAME[name]?.usesTasks);
   }
 
   get(name) {
@@ -151,8 +163,8 @@ export class Syncs {
       }
       for (const x of plan.update) {
         try {
-          await client.update(x.id, x.entry);
-          record(x.entry, x.id, x.hash);
+          const id = await client.update(x.id, x.entry);
+          record(x.entry, typeof id === 'string' && id ? id : x.id, x.hash);
           done.updated++;
         } catch (err) {
           if (err.status !== 404 && err.status !== 410) throw err;
