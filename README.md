@@ -24,6 +24,7 @@ node src/cli.js [--port N]         # ポートを指定して起動
 node src/cli.js scan               # ログを解析してセッション一覧をターミナルに表示
 node src/cli.js summarize [ID]     # LLM で要約 (ID を省略すると、完了済みで未要約のセッションすべて)
 node src/cli.js summarize ID --force   # 要約済みでも再生成
+node src/cli.js remote setup|status|off [--port N] [--any-user]  # スマホなど別の端末から Tailscale 経由で開く (「スマホ・別の端末から見る」を参照)
 node src/cli.js hooks install      # Claude Code の hooks に登録 (hooks 連携を参照)
 node src/cli.js hooks status       # 登録状況を表示
 node src/cli.js hooks uninstall    # 登録を削除
@@ -49,6 +50,8 @@ node src/cli.js export --csv|--xlsx [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--per
 node src/cli.js sync --gcal|--toggl|--clockify|--harvest|--caldav|--redmine-time|--jira-worklog [--week] [--date YYYY-MM-DD] [--from … --to …] [--tz <IANA名>] [--dry-run]  # 記録先に送る (--dry-run は一覧を表示するだけ)
 npm test                           # テストを実行
 ```
+
+このアプリは手元の PC のログを読み、`127.0.0.1` でだけ待ち受けます。Vercel などのホスティングには置けません(別の端末から見たいときは「スマホ・別の端末から見る(Tailscale)」を参照)。
 
 ポートは `--port`、環境変数 `PORT`、既定値 4317 の順に決まります。`summarize` は `ANTHROPIC_API_KEY` が未設定だとエラー終了します。
 
@@ -154,8 +157,59 @@ npm test                           # テストを実行
 | `CALDAV_URL` | CalDAV のカレンダーのコレクションの URL(`caldav.url` でも可) |
 | `CALDAV_USERNAME` | CalDAV の Basic 認証のユーザー名 |
 | `CALDAV_PASSWORD` | CalDAV の Basic 認証のパスワード(アプリパスワード推奨) |
+| `WORKLOG_REMOTE_HOSTS` / `WORKLOG_REMOTE_USERS` | Tailscale 経由で開いてよいホスト名・利用者(カンマ区切り。`config.json` の `remote` に足されます。「スマホ・別の端末から見る」を参照) |
 | `WORKLOG_METRICS=1` | `GET /metrics`(Prometheus 形式)を有効にします(`config.json` の `metrics.enabled` でも可) |
 | `PORT` | 待ち受けポート(`--port` が優先) |
+
+## スマホ・別の端末から見る(Tailscale)
+
+Work Log は手元の PC のログを読み、`127.0.0.1` でだけ待ち受けるので、Vercel などにデプロイして使うものではありません。スマホなど自分の別の端末から見るには、[Tailscale](https://tailscale.com/) の `tailscale serve` で、PC のサーバーを tailnet の中だけに HTTPS で中継します。
+
+### 準備
+
+- PC とスマホの両方に Tailscale を入れ、同じ tailnet にログインします。
+- Tailscale の管理画面(admin console)で、MagicDNS と HTTPS 証明書を有効にします。
+
+### 手順
+
+```sh
+node src/cli.js                    # サーバーを起動 (npm start でも可)
+node src/cli.js remote setup       # 別のターミナルで。https://<PC の名前>.<tailnet>.ts.net/ を表示します
+```
+
+表示された URL をスマホのブラウザで開きます。
+
+- `remote status`: 設定済みの名前と、開ける利用者を表示します。
+- `remote off`: `tailscale serve` を止め、`config.json` の `remote` を空にします。
+- `--port N`: サーバーのポートが 4317 以外のときに付けます。
+- `--any-user`: tailnet の誰でも開けるようにします(既定は、この PC にログインしている Tailscale の利用者だけ)。
+
+### 安全面
+
+- サーバーは `127.0.0.1` のままです。`tailscale serve` が HTTPS で中継し、開けるのは tailnet の中だけです。
+- `config.json` の `remote.hosts` にある名前の Host だけを受け付けます(DNS リバインディング対策)。
+- 既定では、この PC にログインしている Tailscale の利用者(`remote.users`)だけが開けます。`Tailscale-User-Login` ヘッダーで判定します。`tailscale serve` は、送り手が付けたこのヘッダーを消してから付け直します(tailscale v1.102.5 のソース `ipn/ipnlocal/serve.go` で確認)。
+- Funnel(インターネット公開)経由の要求は断ります。`tailscale funnel` は使わないでください。
+- 書き込み(POST)は、Origin が `https://<その名前>` のときだけ通します。
+- フックの受け口(`/api/hook`)、`/api/rescan`、`/metrics` は、この PC の中からだけ使えます。
+- 設定は `config.json` の `remote`(`{ "hosts": ["pc.tailXXXX.ts.net"], "users": ["me@example.com"] }`)に入ります。環境変数 `WORKLOG_REMOTE_HOSTS` / `WORKLOG_REMOTE_USERS`(カンマ区切り)でも足せます。
+
+### 動かし続ける
+
+PC が起きていて、`work-log` が動いている間だけ見られます。ログイン時に自動で起動したいときは、launchd(macOS)、systemd(Linux)、タスクスケジューラ(Windows)に登録してください(設定ファイルはまだ用意していません)。
+
+### スマホでの画面
+
+- カレンダーは枠の中で横にスクロールします。時刻の列と日付の見出しは固定です。
+- ブロックを押すと詳細が画面いっぱいに開き、「← 週の集計」で戻ります。
+- コストやタスクの表は、表だけが枠の中でスクロールします。
+
+### 動作確認
+
+- 単体・結合テスト(`test/remote.test.js`)で確認しています。
+- 本物の `tailscale status --json`(tailscale 1.102.5。ログイン前の NeedsLogin は実際の tailscaled から取得)と同じ形を返す偽の `tailscale` コマンドで、`remote` コマンドを確認しています。
+- `tailscale serve` と同じヘッダーの動きをまねるローカルの HTTPS リバースプロキシ越しに、スマホの大きさの Chromium で、ページの表示、SSE、日報の送信、別の利用者での 403 を確認しています。
+- 本物のログイン済みの tailnet と、実機のスマホでは確認していません。
 
 ## Codex 対応
 
@@ -1246,7 +1300,7 @@ node src/cli.js export --csv|--xlsx [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--tz 
 - `hooks-state.json`: `events.jsonl` の取り込み位置と、セッションごとの最新状態です。
 - `server.json`: 起動中のサーバーのポートと PID です。フックが通知先を知るために使い、サーバーの終了時に削除します。
 - `pricing.json`: 単価表の上書きです(任意、利用者が作成)。形式は「コスト」の「単価表の上書き」を参照してください。
-- `config.json`: タスク管理連携の設定です(任意、利用者が作成)。形式は「タスク管理連携」の「設定」を参照してください。
+- `config.json`: タスク管理連携の設定です(任意、利用者が作成)。形式は「タスク管理連携」の「設定」を参照してください。`remote`(Tailscale 経由で開く名前と利用者)は `remote setup` が書きます(「スマホ・別の端末から見る」を参照)。
 - `links.json`: 詳細パネルから手で付け外ししたタスクです。
 - `github.json`: GitHub の issue / PR の取得結果(ETag を含む)です。形式と再確認の間隔は「タスク管理連携」の「課題管理サービス連携」を参照してください。
 - `tracker-<name>.json`: GitLab / Linear / Jira / Backlog / Notion / Redmine / Gitea の課題の取得結果です(`tracker-gitlab.json`、`tracker-redmine.json` など。GitLab は ETag を含む)。再確認の間隔は GitHub と同じです。
@@ -1258,10 +1312,11 @@ node src/cli.js export --csv|--xlsx [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--tz 
 
 ```
 src/
-  cli.js         コマンドラインの入口 (serve / scan / summarize / hooks / hook / report / ical / export / sync)
+  cli.js         コマンドラインの入口 (serve / scan / summarize / hooks / hook / report / ical / export / sync / remote)
   server.js      HTTP サーバー、API、ファイル監視、更新通知、フックからの通知の受け口
   store.js       ログの収集、JSON キャッシュ、要約の管理、セッション状態の判定、送り先・記録先の呼び出し
   paths.js       ログとキャッシュの場所
+  remote.js      Tailscale 経由の公開設定。許可するホスト・利用者の判定、`tailscale serve` の操作、config.json の remote
   hook.js        hooks から呼ばれる受け口。events.jsonl への追記とサーバーへの通知
   live.js        events.jsonl の取り込みと、作業中/入力待ち/完了の判定
   install.js     Claude Code の settings.json へのフックの登録・削除
@@ -1331,6 +1386,6 @@ test/            テスト (node --test。送り先・記録先・取り込み�
   doc-helpers.js   ドキュメント系の送り先のテストの共通部品
   *.test.js      parser / codex / gemini / copilot / aider / cursor / pricing / git / tasks / trackers / github / notion / hooks / store /
                  slack / discord / teams / googlechat / chatwork / mattermost / rocketchat / lineworks / matrix / email / webhook /
-                 confluence / esa / qiitateam / obsidian / docreport / ical / export / metrics / caldav / redmine-gitea / sync
+                 confluence / esa / qiitateam / obsidian / docreport / ical / export / metrics / caldav / redmine-gitea / sync / remote
 docs/            ドキュメント (requirements.md)
 ```

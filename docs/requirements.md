@@ -54,6 +54,7 @@ Claude Code の作業履歴を自動で収集・可視化し、「いつ何を�
 
 - 表示形態: ローカル Web アプリ(ブラウザ表示)。将来 Electron でラップできる。
 - 要約モデル: Claude Haiku 4.5(安価・高速)。`WORKLOG_MODEL` で変更できる。
+- スマホなど別の端末からは Tailscale 経由で見る(`work-log remote setup`)。サーバーは 127.0.0.1 のまま `tailscale serve` に中継させ、Funnel は使わない。設定したホスト名と(既定で)PC の Tailscale 利用者だけ許し、書き込みは同じ名前の Origin に限る。実際のログイン済み tailnet・実機での確認は未実施。
 - 要約はオプトイン: API キー設定時のみ有効。ボタンまたは CLI で明示的に実行する。
 - マスキング: 既定で有効。API 送信前と画面表示時に適用する。
 - 保存: JSON キャッシュ。SQLite は規模が大きくなった時点で検討する。
