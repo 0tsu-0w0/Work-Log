@@ -10,6 +10,7 @@
 //   work-log sync [--week] [--date YYYY-MM-DD] [--from … --to …] --gcal|--toggl|--clockify|--harvest|--caldav|--redmine-time|--jira-worklog [--dry-run]
 //                            終わったセッションをカレンダー・工数管理サービスに記録する(確認なし。一覧は sync/index.js)
 //   work-log hooks install   Claude Code の hooks に登録(uninstall / status も可)
+//   work-log remote setup [--port 4317] [--any-user]  スマホなど自分の別の端末から Tailscale 経由で開けるようにする(off / status も可)
 //   work-log hook            hooks から呼ばれる受け口(手動では使わない)
 import { defaultPaths } from './paths.js';
 
@@ -51,6 +52,43 @@ if (cmd === 'hooks') {
       console.log(r.events.length ? `登録済み(${r.file}): ${r.events.join(', ')}` : `未登録(${r.file})。work-log hooks install で登録できます。`);
     } else {
       throw new Error(`不明なサブコマンド: ${sub}(install / uninstall / status)`);
+    }
+  } catch (err) {
+    console.error(err.message);
+    process.exit(1);
+  }
+  process.exit(0);
+}
+
+if (cmd === 'remote') {
+  // サーバーは 127.0.0.1 のまま、tailscale serve に HTTPS で中継させる(remote.js)。Funnel(インターネット公開)は使わない
+  const { tailscaleSelf, serveOn, serveOff, updateRemoteConfig, normalizeRemote } = await import('./remote.js');
+  const sub = args[1] || 'status';
+  const { cacheDir } = defaultPaths();
+  const port = Number(flag('port') || process.env.PORT || 4317);
+  try {
+    if (sub === 'setup') {
+      const me = await tailscaleSelf();
+      // 既定では、この PC にログインしている Tailscale の利用者だけに許す(tailnet を人と共有していても他の人は開けない)
+      const anyUser = args.includes('--any-user');
+      if (!anyUser && !me.login) throw new Error('Tailscale の利用者が分かりません。--any-user を付けると、tailnet の誰でも開けるようにして続けます');
+      const { file, remote } = await updateRemoteConfig(cacheDir, (r) => ({ hosts: [...new Set([...r.hosts, me.host])], users: anyUser ? [] : [...new Set([...r.users, me.login])] }));
+      await serveOn(port);
+      console.log(`${file} に設定しました: ${JSON.stringify(remote)}`);
+      console.log(`tailnet の中から開けます: https://${me.host}/`);
+      console.log(anyUser ? '注意: tailnet の誰でも開けます。' : `開けるのは ${me.login} の端末だけです。`);
+      console.log(`Work Log のサーバー(work-log serve --port ${port})を起動しておいてください。インターネットに公開する tailscale funnel は使わないでください。`);
+    } else if (sub === 'off') {
+      await serveOff();
+      const { file } = await updateRemoteConfig(cacheDir, () => ({ hosts: [], users: [] }));
+      console.log(`tailscale serve を止め、${file} の remote を空にしました。`);
+    } else if (sub === 'status') {
+      const { readFile } = await import('node:fs/promises');
+      const json = JSON.parse(await readFile(`${cacheDir}/config.json`, 'utf8').catch(() => '{}'));
+      const r = normalizeRemote(json.remote, process.env);
+      console.log(r.hosts.length ? `開ける名前: ${r.hosts.map((h) => `https://${h}/`).join(' ')}\n利用者: ${r.users.length ? r.users.join(', ') : '(tailnet の誰でも)'}` : '未設定です。work-log remote setup で設定できます。');
+    } else {
+      throw new Error(`不明なサブコマンド: ${sub}(setup / off / status)`);
     }
   } catch (err) {
     console.error(err.message);

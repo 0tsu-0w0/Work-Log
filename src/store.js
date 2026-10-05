@@ -106,6 +106,7 @@ export class Store {
     this.trackers.setConfig(json.tasks || {});
     for (const d of DESTINATIONS) this.destinations[d.name].setConfig(json[d.name] || {});
     this.syncs.setConfig(json);
+    this.remoteCfg = json?.remote && typeof json.remote === 'object' ? json.remote : {}; // Tailscale 経由で開くときの名前と利用者(remote.js)
     this.metricsEnabled = json?.metrics?.enabled === true; // /metrics(Prometheus 形式)を出すか。環境変数 WORKLOG_METRICS=1 でもよい
   }
 

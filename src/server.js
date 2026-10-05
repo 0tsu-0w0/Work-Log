@@ -15,6 +15,7 @@ import { DESTINATIONS, DEST_BY_NAME } from './destinations.js';
 import { SOURCES, TOOL_LABELS } from './sources.js';
 import { status as hooksStatus, settingsPath } from './install.js';
 import { CONTENT_TYPE as METRICS_TYPE } from './metrics.js';
+import { checkAccess, normalizeRemote } from './remote.js';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
@@ -248,13 +249,11 @@ export function createServer(store, { env = process.env } = {}) {
 
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost');
-    // DNS リバインディング対策: Host が自分(127.0.0.1 / localhost)のときだけ応じる
-    const host = (req.headers.host || '').replace(/:\d+$/, '');
-    if (!['127.0.0.1', 'localhost', '[::1]'].includes(host)) return send(res, 403, { error: 'forbidden host' });
-    // 他のサイトのページからの書き込み(CSRF)を断る。フックからの通知は Origin を付けないので通る
-    if (req.method !== 'GET' && req.headers.origin && req.headers.origin !== `http://${req.headers.host}`) {
-      return send(res, 403, { error: 'forbidden origin' });
-    }
+    // DNS リバインディングと CSRF の対策。手元(127.0.0.1 / localhost)と、設定した Tailscale の名前だけに応じる(remote.js)
+    const access = checkAccess(req, normalizeRemote(store.remoteCfg, env));
+    if (!access.ok) return send(res, access.status, { error: access.error });
+    // フックの受け口と Prometheus の指標は、この PC の中からだけ
+    if (access.remote && (url.pathname === '/metrics' || url.pathname === '/api/hook' || url.pathname === '/api/rescan')) return send(res, 403, { error: 'この PC の中からだけ使えます' });
     // Prometheus の指標(WORKLOG_METRICS=1 か config.json の metrics.enabled のときだけ。Host の確かめは上と同じ)
     if (url.pathname === '/metrics') {
       if (env.WORKLOG_METRICS !== '1' && !store.metricsEnabled) return send(res, 404, { error: 'not found' });
