@@ -297,3 +297,62 @@ del { color: #cf222e; text-decoration: none; }
 .cal-export p { margin: 4px 0; }
 .sync-send { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
 .sync-send .small { width: 100%; }
+
+/* スマートフォン(〜700px)。デスクトップの見た目は変えない */
+@media (max-width: 700px) {
+  html, body { height: auto; }
+  body { min-height: 100vh; min-height: 100dvh; font-size: 14px; }
+  button, input, select { min-height: 40px; padding: 6px 12px; font-size: 16px; /* iOS の入力時ズームを防ぐ */ }
+  .toolbar { gap: 8px 12px; padding: 10px 12px; }
+  .toolbar h1 { width: 100%; }
+  .nav { width: 100%; flex-wrap: nowrap; }
+  .nav button { min-width: 44px; white-space: nowrap; flex: none; }
+  .range { margin-left: 2px; font-size: 13px; white-space: nowrap; min-width: 0; }
+  .tabs { flex: 1 1 auto; }
+  .tabs button { flex: 1; white-space: nowrap; padding-left: 8px; padding-right: 8px; }
+  .seg button { min-width: 44px; }
+  .filters { width: 100%; margin-left: 0; gap: 8px; }
+  .filters input { width: 100%; }
+  .filters select { flex: 1 1 calc(50% - 4px); min-width: 0; }
+  .hooks-badge { padding: 4px 10px; }
+
+  .layout { display: block; }
+  /* カレンダーは枠の中で縦横にスクロールし、見出しの行と時刻の列は固定する */
+  .calendar { display: block; height: 70vh; height: 70dvh; overflow: auto; -webkit-overflow-scrolling: touch; }
+  .cal-head, .cal-body { min-width: 640px; }
+  .cal-head { position: sticky; top: 0; z-index: 5; grid-template-columns: 44px repeat(7, minmax(0, 1fr)); }
+  .cal-head div { padding: 6px 4px; }
+  .cal-head div:first-child { position: sticky; left: 0; background: var(--panel); }
+  .cal-body { overflow: visible; grid-template-columns: 44px 1fr; }
+  .hours { position: sticky; left: 0; z-index: 4; background: var(--bg); }
+  .block { min-height: 20px; }
+
+  /* 詳細は画面いっぱいに重ねて表示し、「← 週の集計」で戻る */
+  .side { border: 0; border-top: 1px solid var(--line); overflow: visible; max-height: none; }
+  .side:has(#close) { position: fixed; inset: 0; z-index: 20; overflow: auto; border: 0; -webkit-overflow-scrolling: touch; }
+  .side #close { position: sticky; top: 0; z-index: 2; width: 100%; text-align: left; margin-bottom: 4px; box-shadow: 0 4px 6px -4px rgba(0,0,0,.25); }
+  body:has(#calendar[hidden]) .side:not(:has(#close)) { display: none; }
+  .detail { padding: 12px; }
+  .kv b { font-size: 16px; }
+  .bar-row { grid-template-columns: 72px 1fr 64px; }
+  .files, .commits, .prompt { max-height: none; }
+  .badge { padding: 3px 10px; margin-bottom: 6px; }
+  .slack-send button, .sync-send button, .comment-btn { min-height: 40px; }
+  .chip { padding: 3px 4px 3px 10px; }
+  .chip .rm { min-width: 32px; min-height: 32px; }
+  .task-table .toggle { min-width: 40px; }
+  .result, .top-sessions li, .task-sessions li { padding-top: 8px; padding-bottom: 8px; }
+
+  /* コスト・タスク: ページ全体は動かさず、表だけ枠の中で横にスクロールする */
+  .costs { overflow: visible; padding: 12px; }
+  .cost-tables { overflow-x: auto; }
+  .cost-table, .task-table { display: block; overflow-x: auto; max-width: 100%; }
+  .kpi b { font-size: 18px; }
+  .chart-card { overflow-x: auto; }
+
+  /* ダイアログは画面に収める */
+  .comment-dialog { width: calc(100vw - 24px); max-width: none; max-height: calc(100dvh - 24px); padding: 14px; overflow: auto; }
+  .comment-dialog pre { max-height: 45dvh; overflow-wrap: anywhere; }
+  .comment-dialog .actions { position: sticky; bottom: -14px; background: var(--panel); padding: 8px 0; }
+  .comment-dialog .actions button { flex: 1; }
+}
