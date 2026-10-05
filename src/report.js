@@ -547,3 +547,106 @@ export function sessionEndWebhook(s, { includeCost = false } = {}) {
 
 // 汎用 Webhook のプレビューは整形した JSON なので、そのまま使う
 export const plainFromWebhook = (text) => text;
+
+// ---------------------------------------------------------------- メール(SMTP)
+// multipart/alternative の text/plain と text/html。件名・本文だけを作り、From / To / Date / Message-ID は送るとき(email.js)に付ける
+// (宛先は秘匿情報のマスキングでメールアドレスとして伏せられてしまうため、ここには入れない)。
+// HTML は利用者の文字列をすべて & < > " ' の実体参照にしてから埋め込む
+const HTML_ENT = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+// eslint-disable-next-line no-control-regex
+const hEsc = (s) => String(s ?? '').replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '').replace(/\r\n|\r|\n/g, ' ').replace(/[&<>"']/g, (c) => HTML_ENT[c]);
+const hLink = (label, url) => {
+  const u = safeUrl(url, /["'<>\s`]/g);
+  return u ? `<a href="${hEsc(u)}">${hEsc(label)}</a>` : hEsc(label);
+};
+const EMAIL_FONT = "-apple-system,BlinkMacSystemFont,'Hiragino Sans','Noto Sans JP','Yu Gothic',Meiryo,sans-serif";
+
+// lines は逃がし済みの HTML
+function emailHtml(heading, summary, sections) {
+  const body = sections
+    .map(([name, ls]) => `<h2 style="font-size:15px;margin:22px 0 8px;padding-bottom:4px;border-bottom:2px solid #d97757;">${hEsc(name)}</h2>\n<ul style="margin:0;padding-left:20px;line-height:1.7;">\n${ls.map((l) => `<li>${l}</li>`).join('\n')}\n</ul>`)
+    .join('\n');
+  return [
+    '<!DOCTYPE html>',
+    '<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">',
+    `<title>${hEsc(heading)}</title></head>`,
+    `<body style="margin:0;padding:24px 12px;background:#f5f4ef;color:#1f1f1f;font-family:${EMAIL_FONT};font-size:14px;">`,
+    '<div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #e3e0d8;border-radius:8px;padding:24px;">',
+    `<h1 style="font-size:19px;margin:0 0 6px;">${hEsc(heading)}</h1>`,
+    `<p style="margin:0;color:#555;">${hEsc(summary)}</p>`,
+    body,
+    `<p style="margin:28px 0 0;font-size:12px;color:#888;">${hEsc(FOOTER)}</p>`,
+    '</div></body></html>',
+  ].join('\n');
+}
+
+export function toEmail(report, { includeCost = false, maxSessions = 100 } = {}) {
+  const t = reportParts(report, { includeCost, maxSessions }, { esc: plainEsc, link: plainLink });
+  const h = reportParts(report, { includeCost, maxSessions }, { esc: hEsc, link: hLink });
+  const text = [t.heading, t.summary, ...withSessions(t.sections, t.lines, t.maxSessions).map(([name, ls]) => `\n■ ${name}\n${ls.map((l) => `・${l}`).join('\n')}`), '', '-- ', FOOTER].join('\n');
+  const html = emailHtml(h.heading, h.summary, withSessions(h.sections, h.lines, h.maxSessions));
+  return { subject: t.heading, text, html, preview: text };
+}
+
+export function sessionEndEmail(s, { includeCost = false } = {}) {
+  const parts = [plainEsc(s.project), dur(s.activeMs), `${s.commits}コミット`];
+  if (s.tool && s.tool !== 'claude') parts.push(toolLabel(s.tool));
+  if (includeCost && s.cost) parts.push(`API 換算 $${s.cost.usd.toFixed(2)}`);
+  const name = plainEsc(s.displayTitle || s.title);
+  const tasks = s.tasks || [];
+  const text = [`セッション終了: ${name}`, parts.join('・'), ...(tasks.length ? [`タスク: ${tasks.map((x) => plainLink(x.label, x.url)).join(', ')}`] : []), '', '-- ', FOOTER].join('\n');
+  const html = emailHtml(`セッション終了: ${name}`, parts.join('・'), tasks.length ? [['タスク', tasks.map((x) => hLink(x.label, x.url))]] : []);
+  return { subject: `セッション終了: ${name}`, text, html };
+}
+
+// メールのプレビューは text/plain の本文なので、そのまま使う
+export const plainFromEmail = (text) => text;
+
+// ---------------------------------------------------------------- Matrix
+// m.room.message の body(プレーンテキスト)と formatted_body(org.matrix.custom.html)。
+// メンションは送信側(matrix.js)で "m.mentions": {} を付けて止める(本文の文字列から通知を決める古い規則も、これで働かなくなる)。
+// m.mentions を知らない古いクライアント・サーバーのために、利用者の文字列の @ は全角の ＠ にして @room や @user:server として読まれないようにする。
+// matrix.to のリンクはユーザーやルームの「ピル」(メンション)として表示されるので、タスクのリンクでもリンクにしない。
+// イベント全体は 65536 バイトまでなので、本文が収まるようにセッション一覧を削る
+const MX_MAX_BYTES = 56000;
+const isMatrixTo = (u) => /^https?:\/\/matrix\.to\//i.test(String(u || ''));
+const mxEsc = (s) => plainEsc(s).replace(/@/g, '＠');
+const mxLink = (label, url) => (isMatrixTo(url) ? mxEsc(label) : plainLink(String(label ?? '').replace(/@/g, '＠'), url));
+const mxHEsc = (s) => hEsc(s).replace(/@/g, '＠');
+const mxHLink = (label, url) => {
+  const u = safeUrl(url, /["'<>\s`]/g);
+  return u && !isMatrixTo(u) ? `<a href="${hEsc(u)}">${mxHEsc(label)}</a>` : mxHEsc(label);
+};
+
+export function toMatrix(report, { includeCost = false, maxSessions = 20 } = {}) {
+  const t = reportParts(report, { includeCost, maxSessions }, { esc: mxEsc, link: mxLink });
+  const h = reportParts(report, { includeCost, maxSessions }, { esc: mxHEsc, link: mxHLink });
+  const build = (n) => ({
+    body: [t.heading, t.summary, ...withSessions(t.sections, t.lines, n).map(([name, ls]) => `\n■ ${name}\n${ls.map((l) => `・${l}`).join('\n')}`)].join('\n'),
+    formatted_body: [
+      `<h3>${hEsc(h.heading)}</h3>`,
+      `<p>${hEsc(h.summary)}</p>`,
+      ...withSessions(h.sections, h.lines, n).map(([name, ls]) => `<h4>${hEsc(name)}</h4>\n<ul>\n${ls.map((l) => `<li>${l}</li>`).join('\n')}\n</ul>`),
+      `<p><em>${hEsc(FOOTER)}</em></p>`,
+    ].join('\n'),
+  });
+  let n = t.maxSessions;
+  let out = build(n);
+  while (Buffer.byteLength(JSON.stringify(out)) > MX_MAX_BYTES && n > 0) out = build((n = Math.max(0, n - 5)));
+  return { ...out, preview: out.body };
+}
+
+export function sessionEndMatrix(s, { includeCost = false } = {}) {
+  const parts = [s.project, dur(s.activeMs), `${s.commits}コミット`];
+  if (s.tool && s.tool !== 'claude') parts.push(toolLabel(s.tool));
+  if (includeCost && s.cost) parts.push(`API 換算 $${s.cost.usd.toFixed(2)}`);
+  const tasks = s.tasks || [];
+  const name = s.displayTitle || s.title;
+  return {
+    body: [`セッション終了: ${mxEsc(name)}`, parts.map(mxEsc).join('・'), ...(tasks.length ? [`タスク: ${tasks.map((x) => mxLink(x.label, x.url)).join(', ')}`] : [])].join('\n'),
+    formatted_body: `<p><strong>セッション終了: ${mxHEsc(name)}</strong><br>${parts.map(mxHEsc).join('・')}${tasks.length ? `<br>タスク: ${tasks.map((x) => mxHLink(x.label, x.url)).join(', ')}` : ''}</p>`,
+  };
+}
+
+// Matrix のプレビューは body(プレーンテキスト)なので、そのまま使う
+export const plainFromMatrix = (text) => text;
