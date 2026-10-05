@@ -14,6 +14,7 @@ import { PRICING_AS_OF, PRICING_SOURCE } from './pricing.js';
 import { DESTINATIONS, DEST_BY_NAME } from './destinations.js';
 import { SOURCES, TOOL_LABELS } from './sources.js';
 import { status as hooksStatus, settingsPath } from './install.js';
+import { CONTENT_TYPE as METRICS_TYPE } from './metrics.js';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
@@ -149,13 +150,32 @@ export function createServer(store, { env = process.env } = {}) {
       });
       return res.end(r.ics);
     }
+    // 表計算ソフト向けの書き出し: ?from=&to=&tz=&unit=segment|session(期間の指定は .ics と同じ)。文字列は伏せる
+    const exp = req.method === 'GET' && parts.length === 2 && /^export\.(csv|xlsx)$/.exec(parts[1] || '');
+    if (exp) {
+      let r;
+      try {
+        const q = (k) => url.searchParams.get(k) || undefined;
+        r = store.spreadsheet({ format: exp[1], from: q('from'), to: q('to'), tz: q('tz'), unit: q('unit') });
+      } catch (err) {
+        return send(res, 400, { error: err.message });
+      }
+      const day = (ms) => new Date(ms).toISOString().slice(0, 10).replace(/-/g, '');
+      res.writeHead(200, {
+        'content-type': exp[1] === 'csv' ? 'text/csv; charset=utf-8; header=present' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'content-disposition': `attachment; filename="work-log-${day(r.from)}-${day(r.to - 1)}.${exp[1]}"`,
+        'cache-control': 'no-store',
+        'x-content-type-options': 'nosniff',
+      });
+      return res.end(r.body);
+    }
     // カレンダー・工数管理サービスへの記録: GET ?target=&from=&to=&tz= で下見、POST { target, from, to, tz, hash } で記録
     if (parts[1] === 'sync' && parts.length === 2) {
       try {
         if (req.method === 'GET') {
           const p = Object.fromEntries(url.searchParams);
           const plan = await store.sync(p.target, { from: p.from, to: p.to, tz: p.tz });
-          const items = (list) => list.map(({ entry, hash, id, ...x }) => x);
+          const items = (list) => list.map(({ entry, hash, id, etag, ...x }) => x);
           return send(res, 200, {
             target: plan.target, label: plan.label, status: plan.status, hash: plan.hash, previewText: plan.previewText,
             counts: { create: plan.create.length, update: plan.update.length, delete: plan.delete.length, unchanged: plan.unchanged, skipped: plan.skipped },
@@ -234,6 +254,13 @@ export function createServer(store, { env = process.env } = {}) {
     // 他のサイトのページからの書き込み(CSRF)を断る。フックからの通知は Origin を付けないので通る
     if (req.method !== 'GET' && req.headers.origin && req.headers.origin !== `http://${req.headers.host}`) {
       return send(res, 403, { error: 'forbidden origin' });
+    }
+    // Prometheus の指標(WORKLOG_METRICS=1 か config.json の metrics.enabled のときだけ。Host の確かめは上と同じ)
+    if (url.pathname === '/metrics') {
+      if (env.WORKLOG_METRICS !== '1' && !store.metricsEnabled) return send(res, 404, { error: 'not found' });
+      if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, { error: 'method not allowed' });
+      res.writeHead(200, { 'content-type': METRICS_TYPE, 'cache-control': 'no-store' });
+      return res.end(req.method === 'HEAD' ? undefined : store.metrics());
     }
     const p = url.pathname.startsWith('/api/') ? handleApi(req, res, url) : handleStatic(res, url);
     p.catch((err) => {

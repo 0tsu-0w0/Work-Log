@@ -1,6 +1,7 @@
 // 作業のセッションをカレンダー・工数管理サービスに記録する。記録先を足すときは、SYNCS に1行足す。
 //   name: config.json のキー・API の target・対応表のファイル名 / label: 画面の表示名 / flag: CLI のオプション / env: 主な環境変数
 //   Client: status() / setConfig() / payload(entry) / create(entry) → ID / update(id, entry) / remove(id) を持つクラス(base.js)
+//     create / update は { id, etag } を返してもよい(etag は対応表に残し、次の update / remove に { etag } で渡す。CalDAV 用)
 // 流れ: plan() で「追加・更新・削除」の一覧と hash を作って見せ、apply() で同じ hash のときだけ送る。
 // 送ったものは <cacheDir>/sync-<name>.json(予定のキー → 相手側の ID と内容の hash)に記録し、何度実行しても重複させない。
 // 削除するのは、この対応表にある(= Work Log が作った)もので、手元の区間が無くなったものだけ。
@@ -11,6 +12,7 @@ import { GoogleCalendar } from './gcal.js';
 import { Toggl } from './toggl.js';
 import { Clockify } from './clockify.js';
 import { Harvest } from './harvest.js';
+import { CalDav } from './caldav.js';
 import { buildEntries, allKeys } from './entries.js';
 import { validTimeZone } from '../report.js';
 
@@ -19,6 +21,7 @@ export const SYNCS = [
   { name: 'toggl', label: 'Toggl Track', flag: '--toggl', env: 'TOGGL_API_TOKEN', Client: Toggl },
   { name: 'clockify', label: 'Clockify', flag: '--clockify', env: 'CLOCKIFY_API_KEY', Client: Clockify },
   { name: 'harvest', label: 'Harvest', flag: '--harvest', env: 'HARVEST_ACCESS_TOKEN・HARVEST_ACCOUNT_ID', Client: Harvest },
+  { name: 'caldav', label: 'CalDAV カレンダー', flag: '--caldav', env: 'CALDAV_URL・CALDAV_USERNAME・CALDAV_PASSWORD', Client: CalDav },
 ];
 
 export const SYNC_BY_NAME = Object.fromEntries(SYNCS.map((s) => [s.name, s]));
@@ -48,7 +51,7 @@ export class Syncs {
     this.locks = new Map();
   }
 
-  // config.json 全体を受け取り、記録先ごとの部分(gcal / toggl / clockify / harvest)を渡す
+  // config.json 全体を受け取り、記録先ごとの部分(gcal / toggl / clockify / harvest / caldav)を渡す
   setConfig(json = {}) {
     for (const s of SYNCS) this.clients[s.name].setConfig(json?.[s.name] || {});
   }
@@ -110,7 +113,7 @@ export class Syncs {
       const hash = sha(body);
       const rec = map[e.key];
       if (!rec) create.push({ ...view(e), hash, entry: e });
-      else if (rec.hash !== hash) update.push({ ...view(e), hash, id: rec.id, entry: e });
+      else if (rec.hash !== hash) update.push({ ...view(e), hash, id: rec.id, etag: rec.etag, entry: e });
       else unchanged++;
     }
     const present = allKeys(sessions, { mergeSegments });
@@ -120,7 +123,7 @@ export class Syncs {
       if (!(at >= from && at < to) || present.has(key)) continue;
       // セッションごと消えたものは、古いログの自動削除の可能性があるので、最近のものだけ消す
       if (!sessionIds.has(rec.sessionId) && now - Date.parse(rec.end) > KEEP_MISSING_AFTER_DAYS * 86400000) continue;
-      del.push({ key, id: rec.id, start: rec.start, end: rec.end, title: rec.title, project: rec.project, minutes: Math.round((Date.parse(rec.end) - at) / 60000) });
+      del.push({ key, id: rec.id, etag: rec.etag, start: rec.start, end: rec.end, title: rec.title, project: rec.project, minutes: Math.round((Date.parse(rec.end) - at) / 60000) });
     }
     const hash = sha({ name, dest: client.destination(), create: create.map((x) => [x.key, x.hash]), update: update.map((x) => [x.key, x.id, x.hash]), delete: del.map((x) => [x.key, x.id]) });
     return { target: name, label: def.label, status: client.status(), from, to, timeZone, create, update, delete: del, unchanged, skipped, hash };
@@ -141,8 +144,10 @@ export class Syncs {
     const client = this.get(name);
     const map = await this.readMap(name);
     const done = { created: 0, updated: 0, deleted: 0 };
-    const record = (e, id, hash) => {
-      map[e.key] = { id, hash, sessionId: e.sessionId, start: e.start, end: e.end, title: e.title, project: e.project, at: new Date().toISOString() };
+    // create / update の戻り値は ID の文字列か { id, etag }
+    const record = (e, r, hash, prevId) => {
+      const { id = prevId, etag } = r && typeof r === 'object' ? r : { id: r ?? prevId };
+      map[e.key] = { id, ...(etag ? { etag } : {}), hash, sessionId: e.sessionId, start: e.start, end: e.end, title: e.title, project: e.project, at: new Date().toISOString() };
     };
     try {
       for (const x of plan.create) {
@@ -151,8 +156,7 @@ export class Syncs {
       }
       for (const x of plan.update) {
         try {
-          await client.update(x.id, x.entry);
-          record(x.entry, x.id, x.hash);
+          record(x.entry, await client.update(x.id, x.entry, { etag: x.etag }), x.hash, x.id);
           done.updated++;
         } catch (err) {
           if (err.status !== 404 && err.status !== 410) throw err;
@@ -163,7 +167,7 @@ export class Syncs {
       }
       for (const x of plan.delete) {
         try {
-          await client.remove(x.id);
+          await client.remove(x.id, { etag: x.etag });
         } catch (err) {
           if (err.status !== 404 && err.status !== 410) throw err; // 既に無いものは消えたことにする
         }
