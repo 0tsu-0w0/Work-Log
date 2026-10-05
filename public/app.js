@@ -646,5 +646,6 @@ function renderHooksBadge() {
   await loadWeek();
   // 8時付近を初期表示位置にする
   $('cal-body').scrollTop = HOUR_PX * 8;
+  $('calendar').scrollTop = HOUR_PX * 8; // 狭い画面では calendar 自体がスクロールする
   connectEvents();
 })();
