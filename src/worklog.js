@@ -1,6 +1,7 @@
-// 課題に投稿する作業記録の本文。サービスの書式に合わせて3通りに書き分ける:
-//   markdown: GitHub / GitLab / Linear(表)
+// 課題に投稿する作業記録の本文。サービスの書式に合わせて4通りに書き分ける:
+//   markdown: GitHub / GitLab / Linear / Gitea / Redmine(書式が CommonMark のとき。Redmine 6 の既定)(表)
 //   jira    : Jira の Wiki 記法(REST API v2 の文字列コメント)
+//   textile : Redmine の Textile 記法(書式を Textile にしているサーバー。config.json の tasks.redmine.format)
 //   plain   : Backlog(プロジェクトの記法が Backlog 記法でも Markdown でも崩れないよう、表を使わない)
 import { toolLabel } from './sources.js';
 
@@ -32,6 +33,22 @@ export function buildWorkLog(t, { format = 'markdown', timeZone } = {}) {
       '',
       '||開始||セッション||ツール||作業時間||コミット||',
       ...t.sessions.map((s) => `|${cell(fmt(s.start))}|${cell(s.title)}|${tool(s)}|${dur(s.activeMs)}|${cell(commits(s))}|`),
+      '',
+      `_${footer}_`,
+    ].join('\n');
+  }
+
+  if (format === 'textile') {
+    // 表の区切り "|" は全角に。中身は <notextile> で囲み、* _ - + @ " ! などが記法として解釈されないようにする
+    // (Redmine 6.1.5 の Textile の変換で確かめた。表のセルの中では ==…== は効かず、<notextile> は効く。中の HTML は文字として表示される)
+    const cell = (v) => `<notextile>${String(v).replace(/\n/g, ' ').replace(/<\/?notextile>/gi, '').replace(/\|/g, '｜')}</notextile>`;
+    return [
+      'h3. 作業記録(Work Log)',
+      '',
+      cell(summary),
+      '',
+      '|_. 開始 |_. セッション |_. ツール |_. 作業時間 |_. コミット |',
+      ...t.sessions.map((s) => `| ${cell(fmt(s.start))} | ${cell(s.title)} | ${tool(s)} | ${dur(s.activeMs)} | ${cell(commits(s))} |`),
       '',
       `_${footer}_`,
     ].join('\n');

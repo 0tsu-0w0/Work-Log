@@ -10,19 +10,23 @@ import { GoogleCalendar } from '../src/sync/gcal.js';
 import { Toggl } from '../src/sync/toggl.js';
 import { Clockify } from '../src/sync/clockify.js';
 import { Harvest } from '../src/sync/harvest.js';
+import { RedmineTime } from '../src/sync/redmine.js';
+import { JiraWorklog, jiraTime } from '../src/sync/jira.js';
 
 const API = 'http://fake.test';
 const SECRETS = {
   GOOGLE_CLIENT_ID: 'cid.apps.example', GOOGLE_CLIENT_SECRET: 'GSECRET-xyz', GOOGLE_REFRESH_TOKEN: 'GREFRESH-xyz', GOOGLE_CALENDAR_ID: 'worklog-cal',
   TOGGL_API_TOKEN: 'TOGGLTOKEN123', CLOCKIFY_API_KEY: 'CLOCKIFYKEY123', HARVEST_ACCESS_TOKEN: 'HARVESTTOKEN123', HARVEST_ACCOUNT_ID: '4242',
+  REDMINE_API_KEY: 'REDMINEKEY123', JIRA_EMAIL: 'me@example.com', JIRA_API_TOKEN: 'JIRATOKEN123',
 };
 const ENV = {
   ...SECRETS,
   WORKLOG_GCAL_API: `${API}/gcal`, WORKLOG_GCAL_TOKEN_URL: `${API}/token`,
   WORKLOG_TOGGL_API: `${API}/toggl`, WORKLOG_CLOCKIFY_API: `${API}/clockify`, WORKLOG_HARVEST_API: `${API}/harvest`,
+  WORKLOG_REDMINE_API: `${API}/redmine`, WORKLOG_JIRA_API: `${API}/jira`,
 };
 
-// 4つのサービスの API を真似る。作られた記録を覚え、無い ID の更新・削除には 404 を返す
+// 各サービスの API を真似る。作られた記録を覚え、無い ID の更新・削除には 404 を返す
 function fakeApi() {
   const calls = [];
   const items = new Map();
@@ -43,10 +47,14 @@ function fakeApi() {
     if (u.pathname === '/token') return json(200, { access_token: `AT${calls.length}`, expires_in: 3599, token_type: 'Bearer' });
     if (u.pathname === '/toggl/me') return json(200, { id: 1, default_workspace_id: 777 });
     if (u.pathname === '/clockify/user') return json(200, { id: 'u1', activeWorkspace: 'ws-active', defaultWorkspace: 'ws-default' });
-    const m = u.pathname.match(/^(.*?)(?:\/([^/]+))?$/);
+    if (u.pathname === '/redmine/projects/web-proj.json') return json(200, { project: { id: 5, identifier: 'web-proj' } });
+    if (u.pathname === '/redmine/enumerations/time_entry_activities.json') return json(200, { time_entry_activities: [{ id: 8, name: 'Design', is_default: false, active: true }, { id: 9, name: 'Development', is_default: true, active: true }] });
+    const m = u.pathname.replace(/\.json$/, '').match(/^(.*?)(?:\/([^/]+))?$/);
     if (method === 'POST') {
       const id = `${u.pathname.split('/')[1]}-${++n}`;
       items.set(id, body);
+      // Redmine は { time_entry: { id } } で、作成は 201
+      if (u.pathname.startsWith('/redmine')) return json(201, { time_entry: { id: n, ...body.time_entry } });
       return json(200, { id: u.pathname.startsWith('/toggl') || u.pathname.startsWith('/harvest') ? n : id });
     }
     const id = decodeURIComponent(m[2]);
@@ -64,14 +72,20 @@ function fakeApi() {
 
 function clients(fetchImpl, env = ENV) {
   const o = { env, fetchImpl, minIntervalMs: 0 };
-  return { gcal: new GoogleCalendar(o), toggl: new Toggl(o), clockify: new Clockify(o), harvest: new Harvest(o) };
+  return { gcal: new GoogleCalendar(o), toggl: new Toggl(o), clockify: new Clockify(o), harvest: new Harvest(o), redmine: new RedmineTime(o), jira: new JiraWorklog(o) };
 }
 
 const line = (id, o) => JSON.stringify({ sessionId: id, cwd: '/nonexistent/web', ...o });
 const user = (id, at, content) => line(id, { type: 'user', timestamp: at, message: { role: 'user', content } });
 const asst = (id, at) => line(id, { type: 'assistant', timestamp: at, message: { id: `a${at}`, model: 'claude-opus-5-5', stop_reason: 'end_turn', content: [] } });
 
-async function setup(t, { config = { harvest: { projectId: 11, taskId: 22, timeZone: 'Asia/Tokyo' } } } = {}) {
+const CONFIG = {
+  harvest: { projectId: 11, taskId: 22, timeZone: 'Asia/Tokyo' },
+  redmine: { projectId: 'web-proj', activityId: 9 },
+  tasks: { jira: { baseUrl: 'https://acme.atlassian.net', keys: ['OPS'] } },
+};
+
+async function setup(t, { config = CONFIG } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'work-log-sync-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const proj = path.join(root, 'projects', '-web');
@@ -81,7 +95,8 @@ async function setup(t, { config = { harvest: { projectId: 11, taskId: 22, timeZ
   const now = Date.now();
   const iso = (m) => new Date(now - m * 60000).toISOString();
   // s1: 2つの区間(180〜160分前、60〜50分前)/ s2: 30秒だけ(1分未満なので除く)/ s3: 作業中(除く)
-  const s1 = [user('s1', iso(180), 'ghp_abcdefghijklmnopqrstuvwxyz0123 を使う修正'), asst('s1', iso(170)), asst('s1', iso(160)), user('s1', iso(60), '続き'), asst('s1', iso(50))];
+  // s1 は Jira の課題 OPS-7 に紐付く(Jira の作業ログは課題に紐付いたセッションだけを記録する)
+  const s1 = [user('s1', iso(180), 'ghp_abcdefghijklmnopqrstuvwxyz0123 を使う修正'), user('s1', iso(175), 'OPS-7 の件'), asst('s1', iso(170)), asst('s1', iso(160)), user('s1', iso(60), '続き'), asst('s1', iso(50))];
   await writeFile(path.join(proj, 's1.jsonl'), s1.join('\n'));
   await writeFile(path.join(proj, 's2.jsonl'), [user('s2', iso(300), '短い作業'), asst('s2', iso(299.5))].join('\n'));
   await writeFile(path.join(proj, 's3.jsonl'), [user('s3', iso(20), '作業中のもの'), asst('s3', iso(1))].join('\n'));
@@ -92,7 +107,10 @@ async function setup(t, { config = { harvest: { projectId: 11, taskId: 22, timeZ
   return { root, proj, store, api, range, s1, iso };
 }
 
-const titleOf = { gcal: (b) => b.summary, toggl: (b) => b.description, clockify: (b) => b.description, harvest: (b) => b.notes };
+const titleOf = {
+  gcal: (b) => b.summary, toggl: (b) => b.description, clockify: (b) => b.description, harvest: (b) => b.notes,
+  redmine: (b) => b.time_entry.comments, jira: (b) => b.comment.content[0].content[0].text,
+};
 
 for (const { name } of SYNCS) {
   test(`${name}: 重複させずに記録し、変わったら更新、消えた区間は削除する`, async (t) => {
@@ -133,7 +151,7 @@ for (const { name } of SYNCS) {
     assert.equal(api.items.size, 2);
 
     // 2つめの区間が無くなったら(ログが書き換わったら)削除する
-    await writeFile(path.join(proj, 's1.jsonl'), s1.slice(0, 3).join('\n'));
+    await writeFile(path.join(proj, 's1.jsonl'), s1.slice(0, 4).join('\n'));
     await store.scan();
     const del = await store.sync(name, range);
     assert.deepEqual(del.delete.map((x) => x.key), ['s1-1']);
@@ -288,7 +306,7 @@ test('API: 下見と記録、/api/config に秘密は含めない', async (t) =>
   const cfgText = await (await fetch(`${base}/api/config`)).text();
   for (const v of Object.values(SECRETS).filter((v) => v !== 'worklog-cal' && v !== '4242')) assert.equal(cfgText.includes(v), false, v);
   const cfg = JSON.parse(cfgText);
-  assert.deepEqual(cfg.syncs.map((s) => [s.name, s.configured]), [['gcal', true], ['toggl', true], ['clockify', true], ['harvest', true]]);
+  assert.deepEqual(cfg.syncs.map((s) => [s.name, s.configured]), [['gcal', true], ['toggl', true], ['clockify', true], ['harvest', true], ['redmine', true], ['jira', true]]);
   assert.equal(cfg.syncs[1].label, 'Toggl Track');
   assert.equal(cfg.syncs[1].minMinutes, 1);
 

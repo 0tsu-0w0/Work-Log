@@ -373,10 +373,17 @@ export class Store {
     if (enrich) return this.enrichTasks(await this.resolvedTasks(session), opts);
     let repoInfo = repoInfoOf(webBaseFromRemote(session.repoUrl));
     if (!repoInfo && session.tasks.some((t) => t.kind === 'github')) repoInfo = repoInfoOf(await this.remoteFor(session.cwd));
-    return session.tasks.map((t) => resolveRef(t, { repoInfo, cfg: this.taskCfg, trackers: this.trackers })).filter(Boolean);
+    // URL と "#123" のように別の書き方で同じ課題を指していたら1つにまとめる(時間を二重に数えないため)
+    const byId = new Map();
+    for (const r of session.tasks.map((t) => resolveRef(t, { repoInfo, cfg: this.taskCfg, trackers: this.trackers, project: session.project })).filter(Boolean)) {
+      const cur = byId.get(r.id);
+      if (!cur) byId.set(r.id, r);
+      else byId.set(r.id, { ...cur, url: cur.url || r.url, sources: [...new Set([...(cur.sources || []), ...(r.sources || [])])] });
+    }
+    return [...byId.values()];
   }
 
-  // 課題(GitHub / GitLab / Linear / Jira / Backlog / Notion)のタイトル・状態・ラベルなどを付ける(取れなければ付けない)
+  // 課題(GitHub / GitLab / Linear / Jira / Backlog / Notion / Redmine / Gitea)のタイトル・状態・ラベルなどを付ける(取れなければ付けない)
   async enrichTasks(tasks, opts = {}) {
     return this.trackers.enrich(tasks, opts);
   }
@@ -392,7 +399,7 @@ export class Store {
     const t = (await this.taskSummaries({})).find((x) => x.id === taskId);
     if (!t) throw new Error(`タスクが見つかりません: ${taskId}`);
     const provider = t.provider && this.trackers.get(t.provider);
-    if (!provider || !provider.valid(t)) throw new Error('連携しているサービス(GitHub / GitLab / Linear / Jira / Backlog / Notion)の課題に解決できたタスクだけにコメントできます');
+    if (!provider || !provider.valid(t)) throw new Error('連携しているサービス(GitHub / GitLab / Linear / Jira / Backlog / Notion / Redmine / Gitea)の課題に解決できたタスクだけにコメントできます');
     const sessions = [...t.sessions].reverse().map((s) => ({ ...s, hashes: (this.getRaw(s.id)?.commitList || []).map((c) => c.hash) }));
     // 秘匿情報は書式を整える前にも伏せる(記号を逃がした後では見つけられないことがあるため)
     const body = mask(buildWorkLog(maskDeep({ ...t, sessions }), { format: provider.commentFormat(), timeZone }));
@@ -446,7 +453,10 @@ export class Store {
   async sync(target, { from, to, tz, now = Date.now() } = {}) {
     if (!this.loaded) await this.load();
     const range = resolveRange({ from, to }, { timeZone: validTimeZone(tz), defaultDays: 7, maxDays: 93, now });
-    const plan = await this.syncs.plan(target, this.sessions(now), { ...range, now });
+    let sessions = this.sessions(now);
+    // 課題に紐付けて記録する記録先(Redmine の作業時間・Jira の作業ログ)には、期間に入るセッションの課題を解決して渡す
+    if (this.syncs.usesTasks(target)) sessions = await Promise.all(sessions.map(async (s) => (Date.parse(s.end) >= range.from ? { ...s, linkedTasks: await this.resolvedTasks(s) } : s)));
+    const plan = await this.syncs.plan(target, sessions, { ...range, now });
     return { ...plan, previewText: this.syncs.previewText(plan, validTimeZone(tz || plan.timeZone)) };
   }
 
